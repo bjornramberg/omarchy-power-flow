@@ -4,7 +4,7 @@ UTH Power is an Omarchy shell plugin that turns live component power readings
 into an animated power-flow panel. A source node feeds CPU, GPU, RAM, and disk
 nodes through Bezier cords; faster flow represents a larger power draw.
 
-The plugin adds a compact bolt icon to the right side of the Omarchy bar. Activate it to open the power-flow panel; dismiss the panel with Escape, an outside click, or the same bar location.
+The plugin adds a compact bolt icon to the right side of the Omarchy bar. Activate it to open a bar-anchored power-flow dashboard; dismiss it with Escape, an outside click, or the same bar location. Directional energy packets move from the source toward each component.
 
 ## Requirements
 
@@ -42,6 +42,19 @@ A Hyprland binding can summon it directly:
 ```ini
 bind = SUPER, P, exec, omarchy-shell shell toggle uth.power '{}'
 ```
+
+### Super-key menu entry
+
+Omarchy plugin installation does not copy menu extensions automatically. Add
+the optional UTH Power row to the Super-key menu with the idempotent helper:
+
+```sh
+./scripts/install-menu-entry.sh
+```
+
+The helper updates only `~/.config/omarchy/extensions/omarchy-menu.jsonc`,
+backs up the existing file, and refreshes the menu. The mergeable source
+fragment is in `extensions/omarchy-menu.jsonc`.
 
 ## Local development
 
@@ -94,13 +107,15 @@ go vet ./...
 ## Architecture
 
 ```text
-manifest.json              Omarchy bar-widget + panel plugin manifest
-qml/BarWidget.qml          Compact bar trigger
-qml/Panel.qml              Omarchy/Quickshell lifecycle and process bridge
-Reusable QML components    Source, component nodes, and animated cords
+manifest.json              Omarchy bar-widget plugin manifest
+qml/BarTrigger.qml         Bar icon, lifecycle, process bridge, anchored popup
+qml/UthPowerWidget.qml     Dashboard, source hub, consumer tiles, cord layer
+qml/AnimatedCord.qml       Directional base path, dash flow, energy packets
 backend/                   Go sensor collector and tests
 bin/                       Static amd64/arm64 collector binaries and launcher
-scripts/                   Reproducible binary build script
+extensions/                Optional Super-key menu row
+scripts/                   Binary build and menu-entry installer
+TODO.md                    Optional one-time calibration plan
 ```
 
 The Go collector emits one compact JSON object per line on standard output.
@@ -127,6 +142,13 @@ wall-plug measurement and does not include unmeasured components.
 CPU package energy counters are commonly restricted to root on current Linux
 kernels. UTH Power itself needs no elevated privileges, so the CPU fallback is
 a load/frequency model rather than a hardware measurement.
+
+### Optional calibration
+
+A future optional calibration workflow may capture machine-specific CPU power
+coefficients in a separate, explicitly authorized step while the application
+itself continues to run unprivileged. The design constraints are tracked in
+`TODO.md`; no calibration or privilege escalation is performed automatically.
 
 ## JSON contract
 
