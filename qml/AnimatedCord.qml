@@ -84,14 +84,14 @@ Shape {
     preferredRendererType: Shape.CurveRenderer
 
     // Continuous flow. The timer fires at a fixed cadence and advances the dash
-    // offset by the current (already smoothed) flow speed. Inert or reduced
-    // motion states stop the timer so the cord reads as still.
+    // offset from source to component. Inert or reduced motion states stop the
+    // timer so the cord reads as still.
     Timer {
         interval: 16
         running: !root.reduceMotion && !root.inert && root.effectiveFraction > 0.005
         repeat: true
         onTriggered: {
-            var next = root.dashOffset + root.flowSpeed * interval;
+            var next = root.dashOffset - root.flowSpeed * interval;
             next = next % root.cycleLength;
             if (next < 0)
                 next += root.cycleLength;
