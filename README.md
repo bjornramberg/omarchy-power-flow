@@ -4,7 +4,7 @@ UTH Power is an Omarchy shell plugin that turns live component power readings
 into an animated power-flow panel. A source node feeds CPU, GPU, RAM, and disk
 nodes through Bezier cords; faster flow represents a larger power draw.
 
-The plugin adds a compact bolt icon to the right side of the Omarchy bar. Activate it to open a bar-anchored power-flow dashboard; dismiss it with Escape, an outside click, or the same bar location. Directional energy packets move from the source toward each component.
+The plugin adds a compact bolt icon to the right side of the Omarchy bar. Activate it to open a bar-anchored power-flow dashboard; dismiss it with Escape, an outside click, or the same bar location. Directional energy packets move from the source toward each component, while stroke width, brightness, and packet energy make relative consumption visible at a glance.
 
 ## Requirements
 
@@ -143,6 +143,49 @@ CPU package energy counters are commonly restricted to root on current Linux
 kernels. UTH Power itself needs no elevated privileges, so the CPU fallback is
 a load/frequency model rather than a hardware measurement.
 
+### Process insights
+
+Hovering a component exposes the most useful process-level signal Linux can
+provide without privileges:
+
+- **CPU:** the leading process by machine CPU share, with both percentage of
+  the machine and percentage of one CPU core.
+- **RAM:** the process with the largest resident set (RSS).
+
+These are activity indicators, not power attribution. Linux does not expose
+per-process DRAM or GPU watts, and process I/O permissions are incomplete, so
+UTH Power intentionally does not make disk/GPU process-power claims.
+
+The collector performs one bounded `/proc/<pid>/stat` scan per second. It
+measures about 5 ms per scan on a roughly 460-process host. Disable it with:
+
+```sh
+uth-power --processes off
+```
+
+### Reliability and diagnostics
+
+The collector and panel fail independently and visibly:
+
+- Backend panics are recovered, reported with a bounded stderr diagnostic, and
+  exit with code 70; stdout is never allowed to contain partial JSON.
+- The panel validates schema-v2 samples before replacing good telemetry.
+- Missing, crashing, or unresponsive collectors use bounded exponential
+  backoff, a four-second data watchdog, and a user-visible retry/error state.
+- The last good reading remains visible and is marked stale rather than being
+  silently replaced with zeros.
+
+Useful checks:
+
+```sh
+omarchy plugin validate ~/.config/omarchy/plugins/uth.power
+~/.config/omarchy/plugins/uth.power/bin/uth-power --once
+journalctl --user -t omarchy-shell -f
+```
+
+Collector exit codes are `0` for clean shutdown, `1` for output failure, `2`
+for invalid arguments, and `70` for an internal panic.
+
 ### Optional calibration
 
 A future optional calibration workflow may capture machine-specific CPU power
@@ -161,7 +204,9 @@ Each stdout line has this shape:
     "name": "AC",
     "total_draw_w": 153.89,
     "battery_percentage": 87,
-    "total_draw_kind": "mixed"
+    "total_draw_kind": "mixed",
+    "power_mode": "ac",
+    "battery_status": "charging"
   },
   "components": [
     {
@@ -177,6 +222,18 @@ Each stdout line has this shape:
       "model": {
         "id": "cpu-load/1",
         "assumptions": {}
+      },
+      "top_process": {
+        "pid": 1234,
+        "name": "firefox",
+        "metric": "cpu",
+        "value": 6.25,
+        "unit": "percent_of_machine",
+        "core_percent": 100.0,
+        "window_ms": 1000,
+        "scope": "all_processes",
+        "source": "proc:stat",
+        "ok": true
       }
     },
     {
@@ -192,7 +249,10 @@ Each stdout line has this shape:
 }
 ```
 
-`battery_percentage` is `-1` when no system battery level is available. Stable
+`battery_percentage` is `-1` when no system battery level is available.
+`power_mode` explicitly reports `ac`, `battery`, or `unknown`, and the UI
+chooses the plug, battery, or generic power glyph from that state. Stable
 component IDs are `cpu`, `gpu`, `ram`, and `disk`. `draw_kind` distinguishes
 hardware measurements from estimates and utilization-only values; modeled
-components also include uncertainty and model provenance.
+components also include uncertainty and model provenance. `top_process` is
+optional activity metadata and never represents watts.
