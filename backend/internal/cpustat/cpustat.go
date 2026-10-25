@@ -18,6 +18,9 @@ import (
 type Result struct {
 	Percent int
 	OK      bool
+	// TotalDelta is the aggregate machine tick delta for this interval.  It is
+	// used to compute a process's share of all machine CPU time.
+	TotalDelta uint64
 }
 
 // Meter tracks the aggregate "cpu" line between samples.
@@ -119,5 +122,5 @@ func (m *Meter) Sample(fs *fsx.Root) Result {
 	}
 
 	pct := int(math.Round(units.Clamp(float64(busyDelta)/float64(totalDelta)*100, 0, 100)))
-	return Result{Percent: pct, OK: true}
+	return Result{Percent: pct, OK: true, TotalDelta: totalDelta}
 }

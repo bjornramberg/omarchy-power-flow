@@ -27,6 +27,7 @@ import (
 	"uthpower/backend/internal/nvidia"
 	"uthpower/backend/internal/powercap"
 	"uthpower/backend/internal/powersupply"
+	"uthpower/backend/internal/procmetrics"
 	"uthpower/backend/internal/rammodel"
 	"uthpower/backend/internal/report"
 	"uthpower/backend/internal/units"
@@ -98,6 +99,28 @@ func ParseEstimatesMode(value string) (EstimatesMode, error) {
 	}
 }
 
+// ProcessesMode controls optional top-process metadata.
+type ProcessesMode int
+
+const (
+	// ProcessesAuto enables the bounded /proc process scan.
+	ProcessesAuto ProcessesMode = iota
+	// ProcessesOff skips the process scan and omits top_process.
+	ProcessesOff
+)
+
+// ParseProcessesMode parses auto/off.
+func ParseProcessesMode(value string) (ProcessesMode, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto":
+		return ProcessesAuto, nil
+	case "off":
+		return ProcessesOff, nil
+	default:
+		return ProcessesAuto, fmt.Errorf("invalid processes mode %q (want auto or off)", value)
+	}
+}
+
 // Options configures a Collector.
 type Options struct {
 	Root          string
@@ -106,6 +129,7 @@ type Options struct {
 	NvidiaRunner  nvidia.Runner
 	NvidiaTimeout time.Duration
 	Estimates     EstimatesMode
+	Processes     ProcessesMode
 	Arch          string // test override; defaults to runtime.GOARCH
 	Now           func() time.Time
 }
@@ -120,6 +144,7 @@ type Collector struct {
 	disk      *diskstats.Meter
 	cpu       *cpustat.Meter
 	cpuInfo   cpumodel.Info
+	processes *procmetrics.Scanner
 	estimates bool
 	now       func() time.Time
 }
@@ -147,6 +172,9 @@ func New(opts Options) *Collector {
 		cpuInfo:   cpumodel.Detect(fs, arch),
 		estimates: opts.Estimates != EstimatesOff,
 		now:       now,
+	}
+	if opts.Processes != ProcessesOff {
+		c.processes = procmetrics.New(fs, procmetrics.Options{})
 	}
 
 	path := opts.NvidiaSmiPath
@@ -178,24 +206,25 @@ func New(opts Options) *Collector {
 	return c
 }
 
-// Sample returns a snapshot using the configured clock.
+// Sample returns a snapshot using the configured clock.  A zero-value
+// Collector (or a nil clock) still returns a valid empty snapshot.
 func (c *Collector) Sample() report.Snapshot {
-	return c.SampleAt(c.now())
+	if c == nil {
+		return emptySnapshot()
+	}
+	now := c.now
+	if now == nil {
+		now = time.Now
+	}
+	return c.SampleAt(now())
 }
 
 // SampleAt returns one snapshot at a controlled instant.  Tests use it to
 // exercise delta math without sleeping.
 func (c *Collector) SampleAt(now time.Time) report.Snapshot {
-	if c == nil {
-		return report.Snapshot{
-			SchemaVersion: report.SchemaVersion,
-			Source: report.Source{
-				Name:              powersupply.NameFallback,
-				BatteryPercentage: report.BatteryUnavailable,
-				TotalDrawKind:     report.TotalKindNone,
-			},
-			Components: []report.Component{},
-		}
+	if c == nil || c.fs == nil || c.powercap == nil || c.amd == nil ||
+		c.gpu == nil || c.disk == nil || c.cpu == nil {
+		return emptySnapshot()
 	}
 
 	pc := c.powercap.Sample(now)
@@ -205,15 +234,22 @@ func (c *Collector) SampleAt(now time.Time) report.Snapshot {
 	ramInfo := rammodel.ReadInfo(c.fs)
 	psu := powersupply.Read(c.fs)
 
+	var procRes procmetrics.Result
+	if c.processes != nil {
+		procRes = c.processes.Sample(now, cpuUtil.TotalDelta)
+	}
+
 	components := make([]report.Component, 0, 4)
 
 	if comp := c.cpuComponent(pc.CPU, amd.CPU, cpuUtil); comp != nil {
+		comp.TopProcess = topProcess(procRes.CPU)
 		components = append(components, *comp)
 	}
 	if comp, ok := c.gpuComponent(now); ok {
 		components = append(components, comp)
 	}
 	if comp := c.ramComponent(pc.RAM, amd.RAM, ramInfo, cpuUtil); comp != nil {
+		comp.TopProcess = topProcess(procRes.RSS)
 		components = append(components, *comp)
 	}
 	if disk.OK {
@@ -248,6 +284,8 @@ func (c *Collector) SampleAt(now time.Time) report.Snapshot {
 			TotalDrawW:        units.Round2(total),
 			BatteryPercentage: psu.BatteryPercent,
 			TotalDrawKind:     totalDrawKind(components),
+			PowerMode:         psu.PowerMode,
+			BatteryStatus:     psu.BatteryStatus,
 		},
 		Components: components,
 	}
@@ -415,7 +453,9 @@ func (c *Collector) gpuComponent(now time.Time) (report.Component, bool) {
 
 	draw = units.Round2(draw)
 	// Apply the design's fallback cap per GPU that did not report a limit.
-	max += float64(count-capped) * DefaultGPUMaxW
+	// Defensive clamp: malformed/mixed sensor metadata must not produce a
+	// negative uncapped count.
+	max += float64(uncappedCount(count, capped)) * DefaultGPUMaxW
 	max = normalizeMax(max, draw, DefaultGPUMaxW)
 	activity := units.Percent(draw, max)
 	var utilization *int
@@ -507,6 +547,50 @@ func numericTotal(components []report.Component) float64 {
 		}
 	}
 	return total
+}
+
+func emptySnapshot() report.Snapshot {
+	return report.Snapshot{
+		SchemaVersion: report.SchemaVersion,
+		Source: report.Source{
+			Name:              powersupply.NameFallback,
+			BatteryPercentage: report.BatteryUnavailable,
+			TotalDrawKind:     report.TotalKindNone,
+			PowerMode:         report.PowerModeUnknown,
+		},
+		Components: []report.Component{},
+	}
+}
+
+func topProcess(metric *procmetrics.Metric) *report.TopProcess {
+	if metric == nil {
+		return nil
+	}
+	return &report.TopProcess{
+		PID:         metric.PID,
+		Name:        metric.Name,
+		Metric:      metric.Metric,
+		Value:       metric.Value,
+		Unit:        metric.Unit,
+		CorePercent: metric.CorePercent,
+		WindowMS:    metric.WindowMS,
+		Scope:       metric.Scope,
+		Source:      metric.Source,
+		OK:          metric.OK,
+	}
+}
+
+func uncappedCount(count, capped int) int {
+	if count < 0 {
+		return 0
+	}
+	if capped < 0 {
+		capped = 0
+	}
+	if capped > count {
+		capped = count
+	}
+	return count - capped
 }
 
 func normalizeMax(maxW, drawW, fallback float64) float64 {

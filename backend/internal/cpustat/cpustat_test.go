@@ -80,6 +80,9 @@ func TestSampleDelta(t *testing.T) {
 	if res.Percent != 25 {
 		t.Fatalf("utilization = %d, want 25", res.Percent)
 	}
+	if res.TotalDelta != 1000 {
+		t.Fatalf("TotalDelta = %d, want 1000", res.TotalDelta)
+	}
 }
 
 func TestSampleResetAndMissing(t *testing.T) {

@@ -46,6 +46,18 @@ func writeProc(t *testing.T, root, name, content string) {
 	writeFile(t, filepath.Join(root, "proc", name), content)
 }
 
+func addProcStat(t *testing.T, root string, pid int, comm string, utime, stime, starttime uint64, rssPages int64) {
+	t.Helper()
+	fields := []string{
+		"S", "1", "1", "1", "0", "-1", "0",
+		"0", "0", "0", "0", fmt.Sprint(utime), fmt.Sprint(stime),
+		"0", "0", "20", "0", "1", "0", fmt.Sprint(starttime),
+		"1000", fmt.Sprint(rssPages), "0",
+	}
+	content := fmt.Sprintf("%d (%s) %s\n", pid, comm, strings.Join(fields, " "))
+	writeFile(t, filepath.Join(root, "proc", fmt.Sprint(pid), "stat"), content)
+}
+
 func diskLine(name string, ioTicks string) string {
 	return "8 0 " + name + " 1000 0 10000 100 500 0 5000 50 0 " + ioTicks + " 0 0 0 0 0 0"
 }
@@ -194,6 +206,9 @@ func TestCollectorSnapshotMeasuredAndDiskModeled(t *testing.T) {
 	}
 	if snap.Source.Name != "AC" || snap.Source.BatteryPercentage != 87 {
 		t.Errorf("source = %+v, want AC/87", snap.Source)
+	}
+	if snap.Source.PowerMode != report.PowerModeAC || snap.Source.BatteryStatus != report.BatteryCharging {
+		t.Errorf("source state = %q/%q, want ac/charging", snap.Source.PowerMode, snap.Source.BatteryStatus)
 	}
 	if snap.Source.TotalDrawW != 138.25 {
 		t.Errorf("total = %v, want 138.25", snap.Source.TotalDrawW)
@@ -532,6 +547,124 @@ func TestCollectorEstimatesOffKeepsMeasured(t *testing.T) {
 	}
 }
 
+func setupProcessRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeCPUInfo(t, root, "AuthenticAMD", "AMD Ryzen 7 5800X 8-Core Processor", 8)
+	writeDMI(t, root, "3", "ASUS", "Desktop")
+	addCPUFreq(t, root, "cpu0", 3000000, 3000000)
+	writeMemInfo(t, root, 16777216, 16777216)
+	writePressure(t, root, "0.00")
+	writeProc(t, root, "stat", "cpu  0 0 0 1000 0 0 0 0 0 0\n")
+	addProcStat(t, root, 100, "busy", 0, 0, 100, 20)
+	addProcStat(t, root, 101, "sleep", 0, 0, 100, 100)
+	return root
+}
+
+func TestCollectorTopProcesses(t *testing.T) {
+	root := setupProcessRoot(t)
+	c := New(Options{Root: root, NvidiaMode: NvidiaOff})
+	t0 := time.Unix(1000, 0)
+	c.SampleAt(t0)
+
+	writeProc(t, root, "stat", "cpu  1000 0 0 1000 0 0 0 0 0 0\n")
+	addProcStat(t, root, 100, "busy", 60, 40, 100, 20)
+	addProcStat(t, root, 101, "sleep", 0, 0, 100, 100)
+	snap := c.SampleAt(t0.Add(time.Second))
+
+	cpu := findComponent(t, snap, report.IDCPU)
+	if cpu.TopProcess == nil {
+		t.Fatal("CPU top_process missing")
+	}
+	topCPU := cpu.TopProcess
+	if topCPU.PID != 100 || topCPU.Name != "busy" || topCPU.Metric != report.TopMetricCPU {
+		t.Errorf("CPU top process = %+v", topCPU)
+	}
+	if topCPU.Value != 10 || topCPU.Unit != "percent_of_machine" {
+		t.Errorf("CPU top value = %v %s, want 10 percent_of_machine", topCPU.Value, topCPU.Unit)
+	}
+	if topCPU.CorePercent == nil || *topCPU.CorePercent != 100 {
+		t.Errorf("CPU core percent = %v, want 100", topCPU.CorePercent)
+	}
+	if topCPU.WindowMS != 1000 || topCPU.Scope != "all_processes" || topCPU.Source != "proc:stat" || !topCPU.OK {
+		t.Errorf("CPU top metadata = %+v", topCPU)
+	}
+
+	ram := findComponent(t, snap, report.IDRAM)
+	if ram.TopProcess == nil {
+		t.Fatal("RAM top_process missing")
+	}
+	topRAM := ram.TopProcess
+	if topRAM.PID != 101 || topRAM.Name != "sleep" || topRAM.Metric != report.TopMetricRSS {
+		t.Errorf("RAM top process = %+v", topRAM)
+	}
+	if topRAM.Value != 100*4096 || topRAM.Unit != "bytes" || topRAM.WindowMS != 0 {
+		t.Errorf("RAM top metadata = %+v", topRAM)
+	}
+	if topRAM.CorePercent != nil {
+		t.Errorf("RAM top core_percent = %v, want nil", *topRAM.CorePercent)
+	}
+}
+
+func TestCollectorProcessesOff(t *testing.T) {
+	root := setupProcessRoot(t)
+	c := New(Options{Root: root, NvidiaMode: NvidiaOff, Processes: ProcessesOff})
+	t0 := time.Unix(1000, 0)
+	c.SampleAt(t0)
+	writeProc(t, root, "stat", "cpu  1000 0 0 1000 0 0 0 0 0 0\n")
+	addProcStat(t, root, 100, "busy", 60, 40, 100, 20)
+	snap := c.SampleAt(t0.Add(time.Second))
+
+	for _, id := range []string{report.IDCPU, report.IDRAM} {
+		comp := findComponent(t, snap, id)
+		if comp.TopProcess != nil {
+			t.Errorf("%s has top_process with --processes off: %+v", id, comp.TopProcess)
+		}
+	}
+}
+
+func TestCollectorSourceUnknown(t *testing.T) {
+	snap := New(Options{Root: t.TempDir(), NvidiaMode: NvidiaOff}).SampleAt(time.Unix(1000, 0))
+	if snap.Source.Name != "Unknown" || snap.Source.PowerMode != report.PowerModeUnknown {
+		t.Errorf("source = %+v, want Unknown/unknown", snap.Source)
+	}
+	if snap.Source.BatteryStatus != "" || snap.Source.BatteryPercentage != report.BatteryUnavailable {
+		t.Errorf("source battery = %+v, want no status and -1", snap.Source)
+	}
+}
+
+func TestZeroValueCollectorSample(t *testing.T) {
+	var zero Collector
+	snap := zero.Sample()
+	if snap.SchemaVersion != report.SchemaVersion {
+		t.Errorf("schema = %d, want %d", snap.SchemaVersion, report.SchemaVersion)
+	}
+	if snap.Source.PowerMode != report.PowerModeUnknown || len(snap.Components) != 0 {
+		t.Errorf("zero-value snapshot = %+v", snap)
+	}
+	if snapAt := zero.SampleAt(time.Unix(1000, 0)); snapAt.Source.PowerMode != report.PowerModeUnknown {
+		t.Errorf("zero-value SampleAt = %+v", snapAt)
+	}
+}
+
+func TestUncappedCount(t *testing.T) {
+	tests := []struct {
+		count, capped, want int
+	}{
+		{0, 0, 0},
+		{2, 0, 2},
+		{2, 1, 1},
+		{2, 3, 0},
+		{-1, 2, 0},
+		{2, -1, 2},
+	}
+	for _, tt := range tests {
+		if got := uncappedCount(tt.count, tt.capped); got != tt.want {
+			t.Errorf("uncappedCount(%d,%d) = %d, want %d", tt.count, tt.capped, got, tt.want)
+		}
+	}
+}
+
 func TestCollectorNvidia(t *testing.T) {
 	root := t.TempDir()
 	var gotArgs []string
@@ -634,6 +767,9 @@ func TestCollectorMalformedSensorsDoNotPanic(t *testing.T) {
 	}
 	if snap.Source.Name != "Battery" || snap.Source.BatteryPercentage != report.BatteryUnavailable {
 		t.Errorf("source = %+v, want Battery/-1", snap.Source)
+	}
+	if snap.Source.PowerMode != report.PowerModeBattery || snap.Source.BatteryStatus != report.BatteryDischarging {
+		t.Errorf("source state = %q/%q, want battery/discharging", snap.Source.PowerMode, snap.Source.BatteryStatus)
 	}
 	if snap.Source.TotalDrawKind != report.TotalKindNone {
 		t.Errorf("total kind = %q, want none", snap.Source.TotalDrawKind)

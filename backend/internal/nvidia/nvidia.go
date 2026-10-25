@@ -123,6 +123,9 @@ func Parse(out []byte) Result {
 		res.UtilPercent /= float64(utilCount)
 		res.HasUtil = true
 	}
+	if res.Capped > res.Count {
+		res.Capped = res.Count
+	}
 	return res
 }
 

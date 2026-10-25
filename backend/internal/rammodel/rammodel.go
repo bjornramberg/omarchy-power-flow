@@ -71,6 +71,17 @@ func parseMemInfo(data []byte) (total, available uint64, totalOK, availableOK bo
 		if err != nil {
 			continue
 		}
+		if value > ^uint64(0)/1024 {
+			// Overflowing kB->bytes means the reported value is unusable.
+			// Treat this key as unavailable instead of wrapping.
+			switch fields[0] {
+			case "MemTotal:":
+				totalOK = false
+			case "MemAvailable:":
+				availableOK = false
+			}
+			continue
+		}
 		bytes := value * 1024
 		switch fields[0] {
 		case "MemTotal:":
