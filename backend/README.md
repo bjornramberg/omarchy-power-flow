@@ -28,6 +28,7 @@ uth-power                 # stream one JSON line per second
 uth-power --once          # one line and exit (verification / scripting)
 uth-power --interval 2s   # slower output
 uth-power --estimates off # measured values only (no CPU/RAM fallback)
+uth-power --processes off # omit CPU/RAM top-process metadata
 uth-power --root /tmp/fake-root --once   # hermetic sensor test
 ```
 
@@ -42,6 +43,7 @@ Flags and environment:
 | `--nvidia` | `UTH_POWER_NVIDIA` | `auto` | `auto`, `on`, or `off` |
 | `--nvidia-smi` | - | `nvidia-smi` | Path to the NVIDIA tool |
 | `--estimates` | `UTH_POWER_ESTIMATES` | `auto` | `auto` or `off` |
+| `--processes` | `UTH_POWER_PROCESSES` | `auto` | `auto` or `off` |
 
 `--root` (or `UTH_POWER_ROOT`) prefixes both `/sys` and `/proc` lookups. This is
 intended for tests and verification against a fake sysfs/procfs tree. In
@@ -51,9 +53,9 @@ real tool.
 
 The collector takes an initial warm-up sample and discards it. Delta-based
 sources (RAPL/AMD energy counters, GPU energy counters, `/proc/diskstats` io
-ticks, `/proc/stat` jiffies) need two samples, so the first emitted line is
-already complete. With `--warmup 0`, `--once` can only report instantaneous
-sensors.
+ticks, `/proc/stat` jiffies, and per-process CPU ticks) need two samples, so the
+first emitted line is already complete. With `--warmup 0`, `--once` can only
+report instantaneous sensors and omits top-process metadata.
 
 ## Schema v2
 
@@ -62,28 +64,36 @@ preserved. `schema_version` is always first, and existing source/component
 fields keep their order. New metadata fields are appended.
 
 ```json
-{"schema_version":2,"source":{"name":"AC","total_draw_w":157.05,"battery_percentage":87,"total_draw_kind":"mixed"},"components":[{"id":"cpu","label":"CPU","draw_w":64.4,"max_w":142,"activity_percent":100,"draw_kind":"modeled","draw_source":"model:cpu-load/1","utilization_percent":100,"uncertainty_percent":35,"model":{"id":"cpu-load/1","assumptions":{"class":"ryzen-7-5800x","cores":8,"exact_model":true,"form_factor":"desktop","formula":"idle + (peak-idle) * clamp(util * freq_ratio^1.5)","frequency_ratio":0.5,"frequency_used":true,"idle_w":22,"peak_w":142,"tdp_w":105,"vendor":"amd"}}},{"id":"gpu","label":"GPU","draw_w":85,"max_w":300,"activity_percent":28,"draw_kind":"measured","draw_source":"hwmon:amdgpu"},{"id":"ram","label":"RAM","draw_w":2.4,"max_w":5.6,"activity_percent":0,"draw_kind":"modeled","draw_source":"model:ram-capacity/1","utilization_percent":50,"uncertainty_percent":50,"model":{"id":"ram-capacity/1","assumptions":{"active_w_per_gib":0.35,"capacity_gib":16,"cpu_available":true,"formula":"idle + (max-idle) * clamp(0.75 * mem_pressure_avg10 + 0.25 * cpu_util)","idle_w_per_gib":0.15,"pressure_available":true}}},{"id":"disk","label":"DISK","draw_w":5.25,"max_w":10,"activity_percent":50,"draw_kind":"modeled","draw_source":"model:disk-busy/1","uncertainty_percent":50,"model":{"id":"disk-busy/1","assumptions":{"activity":"sum(io_ticks delta) / elapsed","full_w":10,"idle_w":0.5}}}]}
+{"schema_version":2,"source":{"name":"AC","total_draw_w":157.05,"battery_percentage":87,"total_draw_kind":"mixed","power_mode":"ac","battery_status":"charging"},"components":[{"id":"cpu","label":"CPU","draw_w":64.4,"max_w":142,"activity_percent":100,"draw_kind":"modeled","draw_source":"model:cpu-load/1","utilization_percent":100,"uncertainty_percent":35,"model":{"id":"cpu-load/1","assumptions":{"class":"ryzen-7-5800x","cores":8,"exact_model":true,"form_factor":"desktop","formula":"idle + (peak-idle) * clamp(util * freq_ratio^1.5)","frequency_ratio":0.5,"frequency_used":true,"idle_w":22,"peak_w":142,"tdp_w":105,"vendor":"amd"}},"top_process":{"pid":4242,"name":"firefox","metric":"cpu","value":25,"unit":"percent_of_machine","core_percent":50,"window_ms":1000,"scope":"all_processes","source":"proc:stat","ok":true}},{"id":"gpu","label":"GPU","draw_w":85,"max_w":300,"activity_percent":28,"draw_kind":"measured","draw_source":"hwmon:amdgpu"},{"id":"ram","label":"RAM","draw_w":2.4,"max_w":5.6,"activity_percent":0,"draw_kind":"modeled","draw_source":"model:ram-capacity/1","utilization_percent":50,"uncertainty_percent":50,"model":{"id":"ram-capacity/1","assumptions":{"active_w_per_gib":0.35,"capacity_gib":16,"cpu_available":true,"formula":"idle + (max-idle) * clamp(0.75 * mem_pressure_avg10 + 0.25 * cpu_util)","idle_w_per_gib":0.15,"pressure_available":true}}},{"id":"disk","label":"DISK","draw_w":5.25,"max_w":10,"activity_percent":50,"draw_kind":"modeled","draw_source":"model:disk-busy/1","uncertainty_percent":50,"model":{"id":"disk-busy/1","assumptions":{"activity":"sum(io_ticks delta) / elapsed","full_w":10,"idle_w":0.5}}}]}
 ```
 
 Top level contains exactly `schema_version`, `source` and `components`.
 
 `source`:
 
-- `name` — display label. `AC` when external power is online (or a battery
-  reports Charging/Full), `Battery` when running from a battery, and
-  `PSU / Battery` when no power-supply information is available.
+- `name` — display label derived from truthful source state: `AC` when an
+  external supply is online (or a battery is actively charging without an AC
+  sensor), `Battery` when a system battery is genuinely discharging, and
+  `Unknown` when no trustworthy state is available. It is never inferred from
+  sysfs device names.
 - `total_draw_w` — arithmetic sum of all emitted **numeric** component
   `draw_w` values (measured plus modeled), rounded to two decimals.
   Utilization-only components contribute nothing. It is **not** whole-system
   wall power, **not** battery/AC input power, and does not include omitted
-  components. The `name`/`battery_percentage` fields are independent
-  power-supply telemetry and are never mixed into this total.
+  components. Source state is independent telemetry and is never mixed into
+  this total.
 - `battery_percentage` — integer `0..100`, or **`-1` when no usable battery
   capacity can be read**. `-1` is the sentinel, never a real level.
 - `total_draw_kind` — `measured` when every component is measured, `modeled`
   when every component is modeled, `none` when there are no components, and
   `mixed` otherwise. Utilization-only components therefore make the total
   `mixed`.
+- `power_mode` — `ac`, `battery`, or `unknown`. Precedence: a discharging
+  system battery wins, then an online external supply, then a charging battery
+  with no AC sensor (which implies AC but keeps `battery_status: "charging"`).
+- `battery_status` — optional `charging`, `discharging`, `full`,
+  `not_charging`, or `unknown`, present when a system battery exists. A full
+  battery alone does not prove external power.
 
 `components` is always an array, ordered `cpu`, `gpu`, `ram`, `disk`. Each
 object contains:
@@ -99,10 +109,13 @@ object contains:
 | `utilization_percent` | Optional measured load/occupancy, integer `0..100` |
 | `uncertainty_percent` | Mandatory for modeled components; omitted otherwise |
 | `model` | Optional stable model object (`id` + concise `assumptions`) |
+| `top_process` | Optional CPU/RAM process metadata (never a power claim) |
 
-Measured and modeled components always carry numeric `draw_w`/`max_w`.
+Measured and modeled components normally carry numeric `draw_w`/`max_w`.
 Utilization-only components are the only ones allowed to emit JSON `null` for
 both. A modeled component must carry `uncertainty_percent` and a `model`.
+Non-finite values are sanitized at the output boundary; non-finite draw/max
+fields become `null` rather than producing invalid JSON.
 
 ## Measured values always win
 
@@ -133,7 +146,8 @@ still used for measured CPU activity when available.
 | CPU activity/utilization | `/proc/stat` aggregate `cpu` line | busy jiffy delta / total jiffy delta |
 | RAM usage | `/proc/meminfo` `MemTotal`, `MemAvailable` | (total-available)/total |
 | RAM activity hint | `/proc/pressure/memory` `some avg10` | percent, combined weakly |
-| Battery / AC | `/sys/class/power_supply/*` (`type`, `capacity`, `status`, `online`, `present`) | percent |
+| Top process | `/proc/<pid>/stat` | CPU ticks / RSS pages × page size |
+| Battery / AC | `/sys/class/power_supply/*` (`type`, `capacity`, `status`, `online`, `present`) | percent / explicit state |
 
 Details and edge handling:
 
@@ -164,7 +178,11 @@ Details and edge handling:
 - **Battery** — multiple system batteries are averaged, weighted by
   `energy_full`/`charge_full`. Peripheral batteries (`scope=Device`) and
   non-present batteries are ignored. If `capacity` is absent,
-  `energy_now/energy_full` or `charge_now/charge_full` is used.
+  `energy_now/energy_full` or `charge_now/charge_full` is used. Source state is
+  explicit: discharging battery → `battery`; online external supply → `ac`;
+  charging battery with no AC sensor → `ac` while keeping
+  `battery_status: "charging"`; otherwise `unknown`. Device names are never
+  used to infer external power.
 - **CPU activity** — idle and iowait both count as idle. If `/proc/stat` is
   unavailable, measured CPU activity is derived from `draw_w / max_w`.
 - **GPU activity** — uses `utilization.gpu` from `nvidia-smi` when available;
@@ -173,6 +191,28 @@ Details and edge handling:
 Every sensor read is best-effort. Missing directories, permission errors,
 malformed numbers, NaN/Inf, short lines, counter resets and disappearing
 devices are ignored rather than terminating the process.
+
+## Process robustness and exit codes
+
+- JSON output is marshaled completely before writing; a panic or encoding
+  failure cannot leave a partial JSON line on stdout.
+- A panic inside `run` is recovered, diagnosed on stderr with the panic value
+  capped at about 1 KiB and the stack at about 4 KiB, and exits with **70**
+  (`EX_SOFTWARE`).
+- SIGPIPE is ignored so a closed stdout follows the normal write-error path,
+  not an abrupt signal death. SIGTERM remains a clean exit **0**.
+- `report.normalize` is the final output boundary: non-finite total draw
+  becomes 0, non-finite component draw/max become `null`, percentages are
+  clamped to `0..100`, battery percentage is clamped to `-1..100`, and absurd
+  finite draw values are bounded to 1 MW. Nested model assumptions are
+  sanitized too, so the encoder always emits one valid JSON line.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | Normal completion, SIGTERM/SIGINT, or no-op |
+| `1` | Output/encoding failure |
+| `2` | Invalid flags |
+| `70` | Recovered internal panic (`EX_SOFTWARE`) |
 
 ## CPU model (`model:cpu-load/1`)
 
@@ -239,6 +279,39 @@ With no measured DRAM watts and estimates enabled:
 For modeled RAM, `activity_percent` is the weak activity index used by the watt
 model; `utilization_percent` remains exact memory occupancy.
 
+## Top-process metadata (CPU/RAM only)
+
+When `--processes auto` is active (the default), each sample performs one
+bounded scan of `/proc/<pid>/stat`. A single read per PID yields CPU ticks and
+RSS together. The optional `top_process` object is attached only to CPU and RAM
+components; it is never attached to GPU or disk and is never a power claim.
+
+CPU top process:
+
+- `metric: "cpu"`, `unit: "percent_of_machine"`.
+- `value = process delta ticks / aggregate machine delta ticks * 100`, bounded
+  `0..100`.
+- `core_percent = delta ticks / CLK_TCK / elapsed_seconds * 100`; this may
+  exceed 100 for a multi-threaded process.
+- `window_ms` is the scan interval; `scope: "all_processes"`;
+  `source: "proc:stat"`.
+- Comm is parsed by the last `)` so spaces, parentheses and newlines are safe.
+  Zombies, PID ≤ 2, and kernel threads (`PF_KTHREAD`) are skipped. PID reuse is
+  detected via `(pid, starttime)`. Child times (`cutime`/`cstime`) are not
+  added.
+
+RAM top process:
+
+- `metric: "rss"`, `value` = resident bytes, `unit: "bytes"`, `window_ms: 0`.
+- RSS is labeled as resident memory and is not converted to power.
+
+The scan is capped at about 1200 PIDs and a 10 ms wall-clock budget. If the
+scan is unprimed, incomplete, or over budget, `top_process` is omitted rather
+than reporting zero or partial coverage. `--processes off` skips the scan
+entirely. On the development host (8-core Ryzen 7 5800X, 458 PIDs), the
+benchmark scan took about **5.1 ms** per sample and stayed under the 10 ms
+budget.
+
 ## Disk estimate (`model:disk-busy/1`)
 
 Exact disk wattage is not available from the kernel. The disk component is
@@ -281,16 +354,22 @@ peak/active maximum instead.
 cd backend
 gofmt -l .        # should print nothing
 go test -count=1 ./...
+go test -race ./...
 go vet ./...
+go test -run '^$' -bench '^BenchmarkHostScan$' -benchtime=20x ./internal/procmetrics
 ```
 
 Tests use temporary fake roots and never require real hardware. They cover the
-v2 contract and field ordering, null-only-utilization semantics, measured vs
-modeled provenance, measured-wins selection, CPU model fixtures (idle, full
-load, frequency, no-frequency, VM/non-x86/missing proc stat), RAM model fixtures
-(16 GiB idle/busy, occupancy does not scale watts, missing MemTotal), disk
-numbers unchanged and marked modeled, total-kind consistency, `--estimates=off`,
-powercap `enabled=0` monitoring, plus the v1 sensor parsing/filtering tests.
+v2 contract and field ordering, source power-mode precedence, top-process JSON
+and process-scan filtering (comm with parentheses/spaces/newlines, PID reuse,
+zombies/kernel threads, CPU share, RSS ordering, scan cap/budget), panic
+recovery/exit 70, non-finite JSON sanitization, null-only-utilization
+semantics, measured vs modeled provenance, measured-wins selection, CPU model
+fixtures (idle, full load, frequency, no-frequency, VM/non-x86/missing proc
+stat), RAM model fixtures (16 GiB idle/busy, occupancy does not scale watts,
+missing/overflowing MemTotal), disk numbers unchanged and marked modeled,
+total-kind consistency, `--estimates=off`/`--processes=off`, powercap
+`enabled=0` monitoring, plus the v1 sensor parsing/filtering tests.
 
 ## Layout
 
@@ -307,7 +386,8 @@ backend/
   internal/nvidia/        nvidia-smi runner and CSV parser
   internal/diskstats/     sysfs-gated /proc/diskstats activity estimate
   internal/cpustat/       /proc/stat CPU utilization
-  internal/powersupply/   battery capacity and AC state
+  internal/procmetrics/   bounded /proc/<pid>/stat CPU ticks + RSS scan
+  internal/powersupply/   explicit battery/AC source state
   internal/cpumodel/      CPU identity/DMI/cpufreq detection + watt model
   internal/rammodel/      /proc/meminfo/pressure + RAM watt model
 ```

@@ -153,6 +153,32 @@ func TestMissingMemTotalOmitsRAM(t *testing.T) {
 	}
 }
 
+func TestMemInfoOverflowIsRejected(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "proc", "meminfo"),
+		"MemTotal: 18446744073709551615 kB\n"+
+			"MemAvailable: 16777216 kB\n")
+	info := readInfo(t, root)
+	if info.TotalOK || info.TotalBytes != 0 {
+		t.Fatalf("overflowing MemTotal was accepted: %+v", info)
+	}
+	if _, ok := EstimateWatts(info, 50, true); ok {
+		t.Fatal("overflowing MemTotal produced a model")
+	}
+
+	root = t.TempDir()
+	writeFile(t, filepath.Join(root, "proc", "meminfo"),
+		"MemTotal: 16777216 kB\n"+
+			"MemAvailable: 18446744073709551615 kB\n")
+	info = readInfo(t, root)
+	if info.AvailableOK {
+		t.Fatalf("overflowing MemAvailable was accepted: %+v", info)
+	}
+	if _, ok := EstimateWatts(info, 50, true); ok {
+		t.Fatal("overflowing MemAvailable produced a model")
+	}
+}
+
 func TestNoPressureUsesWeakCPUActivity(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "proc", "meminfo"), meminfo(16777216, 16777216))

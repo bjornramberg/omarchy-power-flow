@@ -1,5 +1,7 @@
 # TODO
 
+Only intentionally deferred work belongs here.
+
 ## Optional one-time power calibration
 
 The UTH Power application itself must always run unprivileged. Add an optional,

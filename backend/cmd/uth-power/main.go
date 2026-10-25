@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -16,14 +17,38 @@ import (
 	"uthpower/backend/internal/report"
 )
 
+const exitSoftware = 70 // EX_SOFTWARE
+
+// snapshotSource is the small seam used by run.  Tests can substitute a
+// panicking implementation without touching the collector package.
+type snapshotSource interface {
+	Sample() report.Snapshot
+}
+
+var newSnapshotSource = func(opts collector.Options) snapshotSource {
+	return collector.New(opts)
+}
+
 func main() {
+	// Ignore SIGPIPE so a closed stdout becomes an ordinary write error and
+	// the normal error path, rather than killing the process mid-line.
+	signal.Ignore(syscall.SIGPIPE)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Stdout, os.Stderr, os.Args[1:])
 	stop()
 	os.Exit(code)
 }
 
-func run(ctx context.Context, stdout, stderr io.Writer, args []string) int {
+func run(ctx context.Context, stdout, stderr io.Writer, args []string) (exitCode int) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			fmt.Fprintf(stderr, "uth-power: panic: %s\n", boundedPanicText(recovered))
+			fmt.Fprintf(stderr, "uth-power: stack:\n%s\n", boundedStack())
+			exitCode = exitSoftware
+		}
+	}()
+
 	fs := flag.NewFlagSet("uth-power", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -38,6 +63,10 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) int {
 	estimatesDefault := os.Getenv("UTH_POWER_ESTIMATES")
 	if estimatesDefault == "" {
 		estimatesDefault = "auto"
+	}
+	processesDefault := os.Getenv("UTH_POWER_PROCESSES")
+	if processesDefault == "" {
+		processesDefault = "auto"
 	}
 
 	root := fs.String("root", rootDefault,
@@ -54,6 +83,8 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) int {
 		"path to nvidia-smi")
 	estimates := fs.String("estimates", estimatesDefault,
 		"CPU/RAM model mode: auto or off (env UTH_POWER_ESTIMATES)")
+	processes := fs.String("processes", processesDefault,
+		"top-process metadata mode: auto or off (env UTH_POWER_PROCESSES)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: uth-power [flags]\n\n")
@@ -91,12 +122,18 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) int {
 		fmt.Fprintf(stderr, "uth-power: %v\n", err)
 		return 2
 	}
+	procMode, err := collector.ParseProcessesMode(*processes)
+	if err != nil {
+		fmt.Fprintf(stderr, "uth-power: %v\n", err)
+		return 2
+	}
 
-	c := collector.New(collector.Options{
+	c := newSnapshotSource(collector.Options{
 		Root:          *root,
 		NvidiaMode:    mode,
 		NvidiaSmiPath: *nvidiaSmi,
 		Estimates:     estMode,
+		Processes:     procMode,
 	})
 
 	// Prime delta sources.  The resulting snapshot is intentionally
@@ -115,8 +152,20 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) int {
 	}
 
 	emit := func() bool {
-		if err := report.Encode(stdout, c.Sample()); err != nil {
+		// Marshal the complete line before touching stdout.  A panic or
+		// encoding error therefore cannot leave a partial JSON object behind.
+		line, err := report.MarshalLine(c.Sample())
+		if err != nil {
+			fmt.Fprintf(stderr, "uth-power: encoding output: %v\n", err)
+			return false
+		}
+		n, err := stdout.Write(line)
+		if err != nil {
 			fmt.Fprintf(stderr, "uth-power: writing output: %v\n", err)
+			return false
+		}
+		if n != len(line) {
+			fmt.Fprintf(stderr, "uth-power: short write: %d of %d bytes\n", n, len(line))
 			return false
 		}
 		return true
@@ -145,4 +194,24 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) int {
 			}
 		}
 	}
+}
+
+func boundedPanicText(value any) (text string) {
+	defer func() {
+		if recover() != nil {
+			text = "<unprintable panic value>"
+		}
+	}()
+	return truncate(fmt.Sprint(value), 1024)
+}
+
+func boundedStack() string {
+	return truncate(string(debug.Stack()), 4096)
+}
+
+func truncate(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...[truncated]"
 }

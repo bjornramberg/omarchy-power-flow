@@ -1,12 +1,18 @@
-// Package powersupply reads battery capacity and AC state from
+// Package powersupply reads battery capacity and power-source state from
 // /sys/class/power_supply.
 //
 // Battery capacity is a 0..100 integer, or report.BatteryUnavailable (-1)
 // when no usable capacity can be read.  Multiple batteries are averaged,
-// weighted by energy_full/charge_full when available.  The source name is a
-// display label: "AC" when external power is online, "Battery" when running
-// from a battery, and the generic "PSU / Battery" when neither can be
-// determined.
+// weighted by energy_full/charge_full when available.
+//
+// PowerMode is explicit:
+//   - battery: at least one genuine system battery is discharging
+//   - ac:      an external supply reports online=1, or a battery reports
+//     charging without an AC sensor
+//   - unknown: no trustworthy state is available
+//
+// A full battery alone does not prove external power.  Name is a display label
+// derived only from these modes, never from sysfs device names.
 package powersupply
 
 import (
@@ -20,26 +26,48 @@ import (
 	"uthpower/backend/internal/units"
 )
 
+// Display names.  NameFallback is kept as a compatibility alias for callers
+// that used the old fallback constant; the truthful value is "Unknown".
 const (
-	// NameAC is shown when external power is online.
-	NameAC = "AC"
-	// NameBattery is shown when the machine is running from a battery.
-	NameBattery = "Battery"
-	// NameFallback is shown when no power-supply information is available.
-	NameFallback = "PSU / Battery"
+	NameAC       = "AC"
+	NameBattery  = "Battery"
+	NameUnknown  = "Unknown"
+	NameFallback = NameUnknown
+)
+
+// Explicit source modes.
+const (
+	ModeAC      = "ac"
+	ModeBattery = "battery"
+	ModeUnknown = "unknown"
+)
+
+// Battery statuses.
+const (
+	BatteryCharging    = "charging"
+	BatteryDischarging = "discharging"
+	BatteryFull        = "full"
+	BatteryNotCharging = "not_charging"
+	BatteryUnknown     = "unknown"
 )
 
 // Status is the source-side telemetry for one sample.
 type Status struct {
 	Name           string
 	BatteryPercent int
+	PowerMode      string
+	BatteryStatus  string
 }
 
 // Read scans /sys/class/power_supply.  It never returns an error; missing or
-// unreadable entries degrade to the fallback name and the unavailable
-// percentage sentinel.
+// unreadable entries degrade to unknown and the unavailable percentage
+// sentinel.
 func Read(fs *fsx.Root) Status {
-	out := Status{Name: NameFallback, BatteryPercent: -1}
+	out := Status{
+		Name:           NameUnknown,
+		BatteryPercent: -1,
+		PowerMode:      ModeUnknown,
+	}
 	if fs == nil {
 		return out
 	}
@@ -50,8 +78,12 @@ func Read(fs *fsx.Root) Status {
 	}
 
 	acOnline := false
-	batteryExternal := false
 	batteries := 0
+	discharging := false
+	charging := false
+	full := false
+	notCharging := false
+
 	capacitySum := 0.0
 	weightSum := 0.0
 	capacityCount := 0
@@ -64,6 +96,8 @@ func Read(fs *fsx.Root) Status {
 		}
 
 		if typ != "battery" {
+			// Only the online flag matters.  Do not infer external power
+			// from device names such as "AC" or "ADP1".
 			if strings.TrimSpace(readString(filepath.Join(dir, "online"))) == "1" {
 				acOnline = true
 			}
@@ -78,10 +112,18 @@ func Read(fs *fsx.Root) Status {
 		}
 		batteries++
 
-		status := strings.ToLower(strings.TrimSpace(readString(filepath.Join(dir, "status"))))
-		switch status {
-		case "charging", "full", "not charging":
-			batteryExternal = true
+		switch batteryStatus(readString(filepath.Join(dir, "status"))) {
+		case BatteryDischarging:
+			discharging = true
+		case BatteryCharging:
+			charging = true
+		case BatteryFull:
+			full = true
+		case BatteryNotCharging:
+			notCharging = true
+		default:
+			// Unknown status still counts as a present battery; the aggregate
+			// below falls back to BatteryUnknown when no known status exists.
 		}
 
 		capacity, weight, ok := batteryLevel(dir)
@@ -92,19 +134,63 @@ func Read(fs *fsx.Root) Status {
 		}
 	}
 
+	if batteries > 0 {
+		switch {
+		case discharging:
+			out.BatteryStatus = BatteryDischarging
+		case charging:
+			out.BatteryStatus = BatteryCharging
+		case full:
+			out.BatteryStatus = BatteryFull
+		case notCharging:
+			out.BatteryStatus = BatteryNotCharging
+		default:
+			// A battery exists but its status is unreadable/unrecognized.
+			out.BatteryStatus = BatteryUnknown
+		}
+	}
+
 	switch {
-	case acOnline || batteryExternal:
+	case discharging:
+		out.PowerMode = ModeBattery
+	case acOnline:
+		out.PowerMode = ModeAC
+	case charging:
+		// A battery that is actively charging implies an external supply even
+		// when no AC device is exposed.  The battery status remains charging.
+		out.PowerMode = ModeAC
+	default:
+		out.PowerMode = ModeUnknown
+	}
+
+	switch out.PowerMode {
+	case ModeAC:
 		out.Name = NameAC
-	case batteries > 0:
+	case ModeBattery:
 		out.Name = NameBattery
 	default:
-		out.Name = NameFallback
+		out.Name = NameUnknown
 	}
 
 	if capacityCount > 0 && weightSum > 0 {
 		out.BatteryPercent = clampPercent(capacitySum / weightSum)
 	}
 	return out
+}
+
+func batteryStatus(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "charging":
+		return BatteryCharging
+	case "discharging":
+		return BatteryDischarging
+	case "full":
+		return BatteryFull
+	case "not charging":
+		return BatteryNotCharging
+	default:
+		return BatteryUnknown
+	}
 }
 
 // batteryLevel returns capacity percent and an averaging weight.  capacity is
