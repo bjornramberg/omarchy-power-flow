@@ -16,6 +16,9 @@ Item {
     required property var canonicalIds
     property bool dataLoaded: false
     property bool stale: false
+    property bool retrying: false
+    property bool permanentFailure: false
+    property string faultText: ""
     property bool reduceMotion: false
     property color foreground: Commons.Color.foreground
     property color dimmed: Qt.darker(foreground, 1.35)
@@ -70,13 +73,40 @@ Item {
     }
 
     function sourceGlyph() {
-        var name = sourceName().toLowerCase();
-        if (name.indexOf("battery") >= 0)
-            return "\uf240";
-
-        if (name.indexOf("ac") >= 0 || name.indexOf("power") >= 0 || name.indexOf("plug") >= 0)
+        var mode = sourceData && sourceData.power_mode ? String(sourceData.power_mode).toLowerCase() : "";
+        if (!mode) {
+            // Legacy fallback by source name substring.
+            var name = sourceName().toLowerCase();
+            if (name.indexOf("battery") >= 0)
+                mode = "battery";
+            else if (name.indexOf("ac") >= 0 || name.indexOf("power") >= 0 || name.indexOf("plug") >= 0)
+                mode = "ac";
+            else
+                mode = "unknown";
+        }
+        if (mode === "ac")
             return "\uf1e6";
 
+        if (mode === "battery") {
+            var status = sourceData && sourceData.battery_status ? String(sourceData.battery_status).toLowerCase() : "";
+            if (status === "charging" || status === "full" || status === "ac")
+                return "\uf0e7";
+
+            var pct = sourceData && typeof sourceData.battery_percentage === "number" ? sourceData.battery_percentage : -1;
+            if (pct >= 75)
+                return "\uf240";
+
+            if (pct >= 50)
+                return "\uf241";
+
+            if (pct >= 25)
+                return "\uf242";
+
+            if (pct > 0)
+                return "\uf243";
+
+            return "\uf244";
+        }
         return "\uf0e7";
     }
 
@@ -96,6 +126,23 @@ Item {
         return "\uf0e7";
     }
 
+    function formatBytes(bytes) {
+        var n = Number(bytes);
+        if (!isFinite(n) || n < 0)
+            return "—";
+
+        if (n < 1024)
+            return n.toFixed(0) + " B";
+
+        if (n < 1024 * 1024)
+            return (n / 1024).toFixed(1) + " KiB";
+
+        if (n < 1024 * 1024 * 1024)
+            return (n / (1024 * 1024)).toFixed(1) + " MiB";
+
+        return (n / (1024 * 1024 * 1024)).toFixed(1) + " GiB";
+    }
+
     function formatSourceTotal() {
         var kind = sourceData && sourceData.total_draw_kind ? String(sourceData.total_draw_kind) : "none";
         if (!root.dataLoaded || kind === "none")
@@ -112,63 +159,114 @@ Item {
         return prefix + Math.round(n).toLocaleString(Qt.locale(), "f", 0) + " W";
     }
 
+    function statusText() {
+        if (root.permanentFailure)
+            return "ERROR";
+
+        if (root.retrying)
+            return "RETRYING";
+
+        if (root.stale)
+            return "STALE";
+
+        if (root.dataLoaded)
+            return "LIVE";
+
+        return "OFFLINE";
+    }
+
+    function statusColor() {
+        if (root.permanentFailure)
+            return root.urgent;
+
+        if (root.retrying)
+            return root.accent;
+
+        if (root.stale)
+            return root.urgent;
+
+        if (root.dataLoaded)
+            return root.accent;
+
+        return root.dimmed;
+    }
+
     implicitWidth: Math.max(header.implicitWidth, body.implicitWidth)
     implicitHeight: header.implicitHeight + root.headerBodyGap + body.implicitHeight
 
     // ---------- Header: identity, status, legend ----------
-    Row {
+    Column {
         id: header
 
-        spacing: Style.space(10)
+        spacing: Style.space(4)
         anchors.horizontalCenter: parent.horizontalCenter
 
-        Text {
-            text: "\uf0e7"
-            color: root.accent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.title
-            anchors.verticalCenter: parent.verticalCenter
-        }
-
-        Column {
-            spacing: Style.space(1)
-            anchors.verticalCenter: parent.verticalCenter
+        Row {
+            spacing: Style.space(10)
+            anchors.horizontalCenter: parent.horizontalCenter
 
             Text {
-                text: "POWER FLOW"
-                color: root.foreground
+                text: "\uf0e7"
+                color: root.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.title
-                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
             }
 
-            Row {
-                spacing: Style.space(6)
+            Column {
+                spacing: Style.space(1)
+                anchors.verticalCenter: parent.verticalCenter
 
                 Text {
-                    text: root.stale ? "STALE" : (root.dataLoaded ? "LIVE" : "OFFLINE")
-                    color: root.stale ? root.urgent : (root.dataLoaded ? root.accent : root.dimmed)
+                    text: "POWER FLOW"
+                    color: root.foreground
                     font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
+                    font.pixelSize: Style.font.title
                     font.bold: true
                 }
 
-                Text {
-                    text: "·"
-                    color: root.dimmed
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                }
+                Row {
+                    spacing: Style.space(6)
 
-                Text {
-                    text: "~ estimated  ·  exact measured"
-                    color: root.dimmed
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
+                    Text {
+                        text: root.statusText()
+                        color: root.statusColor()
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
+                    }
+
+                    Text {
+                        text: "·"
+                        color: root.dimmed
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+
+                    Text {
+                        text: "~ estimated  ·  exact measured"
+                        color: root.dimmed
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+
                 }
 
             }
 
+        }
+
+        Text {
+            visible: root.faultText !== ""
+            text: root.faultText
+            color: root.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            anchors.horizontalCenter: parent.horizontalCenter
+            wrapMode: Text.Wrap
+            width: parent.width
         }
 
     }
@@ -322,6 +420,7 @@ Item {
         readonly property int activityPercent: c && typeof c.activity_percent === "number" ? c.activity_percent : 0
         readonly property int uncertaintyPercent: c && typeof c.uncertainty_percent === "number" ? c.uncertainty_percent : 0
         readonly property string modelName: c && c.model && typeof c.model === "object" && c.model.id !== undefined ? String(c.model.id) : ""
+        readonly property var topProcess: c && c.top_process ? c.top_process : null
         readonly property bool hasWatts: drawW !== null && drawW !== undefined && isFinite(Number(drawW))
         readonly property real displayFraction: {
             if (nodeId === "cpu" || nodeId === "ram")
@@ -361,8 +460,40 @@ Item {
             return activityPercent + "%";
         }
 
+        function topProcessText() {
+            var tp = tile.topProcess;
+            if (!tp || typeof tp !== "object")
+                return "";
+
+            var name = tp.name !== undefined ? String(tp.name) : "unknown";
+            if (nodeId === "cpu") {
+                var value = Number(tp.value);
+                var core = Number(tp.core_percent);
+                if (!isFinite(value))
+                    return "";
+
+                var text = "Top CPU: " + name + " — " + value.toFixed(1) + "% of machine";
+                if (isFinite(core))
+                    text += " (" + core.toFixed(0) + "% of one core)";
+
+                return text;
+            }
+            if (nodeId === "ram") {
+                var bytes = Number(tp.value);
+                if (!isFinite(bytes))
+                    return "";
+
+                return "Largest resident: " + name + " — " + root.formatBytes(bytes) + " RSS";
+            }
+            return "";
+        }
+
         function tooltipText() {
             var parts = [];
+            var tp = tile.topProcessText();
+            if (tp)
+                parts.push(tp);
+
             if (drawSource)
                 parts.push("Source: " + drawSource);
 
@@ -476,12 +607,16 @@ Item {
 
         // Provenance tooltip.
         MouseArea {
+            id: tileHover
+
             anchors.fill: parent
             hoverEnabled: true
             acceptedButtons: Qt.NoButton
 
             PanelToolTip {
-                visible: parent.containsMouse && tile.tooltipText() !== ""
+                id: tileTooltip
+
+                visible: tileHover.containsMouse && tile.tooltipText() !== ""
                 text: tile.tooltipText()
                 fontFamily: root.fontFamily
             }

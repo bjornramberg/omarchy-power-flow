@@ -6,7 +6,9 @@ import qs.Ui
 
 // Directional energy cord from the source hub to a single consumer.
 // Renders a dim continuous base path plus a brighter dashed flow and small
-// travelling packets. Reduced motion collapses to a clean static line.
+// travelling packets. Higher draw fractions produce clearly thicker, brighter,
+// faster cords; low fractions stay subtle. Reduced motion collapses to a clean
+// static line.
 Item {
     id: root
 
@@ -45,30 +47,38 @@ Item {
 
         return root.activityPercent / 100;
     }
+    // Visual weight: low fractions are hairline-subtle; high fractions are
+    // distinctly thick so relative consumption is legible at a glance.
     readonly property real strokeWidth: {
         var baseLo = Math.max(1.2, Style.spaceReal(1.5));
-        var baseHi = Math.max(baseLo, Style.spaceReal(3));
-        var base = baseLo + (baseHi - baseLo) * Math.pow(root.effectiveFraction, 0.7);
+        var baseHi = Math.max(baseLo, Style.spaceReal(5));
+        var f = Math.pow(root.effectiveFraction, 0.5);
+        var base = baseLo + (baseHi - baseLo) * f;
         return root.inert ? Math.max(1, base * 0.65) : base;
     }
-    readonly property color baseStrokeColor: Util.alpha(root.dimmed, root.inert ? 0.18 : 0.32)
+    readonly property color baseStrokeColor: {
+        var f = Math.pow(root.effectiveFraction, 0.5);
+        var a = root.inert ? 0.2 : (0.3 + 0.25 * f);
+        return Util.alpha(root.dimmed, a);
+    }
     readonly property color flowStrokeColor: {
         if (root.inert)
             return Util.alpha(root.dimmed, 0.22);
 
-        var f = Math.pow(root.effectiveFraction, 0.6);
-        return Qt.rgba((1 - f) * root.foreground.r + f * root.accent.r, (1 - f) * root.foreground.g + f * root.accent.g, (1 - f) * root.foreground.b + f * root.accent.b, 0.5 + 0.45 * f);
+        var f = Math.pow(root.effectiveFraction, 0.55);
+        var a = 0.55 + 0.45 * f;
+        return Qt.rgba((1 - f) * root.foreground.r + f * root.accent.r, (1 - f) * root.foreground.g + f * root.accent.g, (1 - f) * root.foreground.b + f * root.accent.b, a);
     }
-    readonly property real dashOn: Math.max(4, Style.spaceReal(10))
-    readonly property real dashOff: Math.max(3, Style.spaceReal(6))
+    readonly property real dashOn: Math.max(5, Style.spaceReal(12))
+    readonly property real dashOff: Math.max(4, Style.spaceReal(7))
     readonly property real cycleLength: root.dashOn + root.dashOff
     readonly property real baseDuration: 2600
-    readonly property real fastDuration: 320
+    readonly property real fastDuration: 280
     readonly property real targetDuration: {
         if (root.inert || root.effectiveFraction <= 0.005)
             return root.baseDuration;
 
-        var f = Math.pow(root.effectiveFraction, 0.5);
+        var f = Math.pow(root.effectiveFraction, 0.45);
         return root.fastDuration + (root.baseDuration - root.fastDuration) * (1 - f);
     }
     property real flowSpeed: root.cycleLength / Math.max(50, root.targetDuration)
@@ -93,7 +103,7 @@ Item {
         preferredRendererType: Shape.CurveRenderer
 
         ShapePath {
-            strokeWidth: root.strokeWidth * 0.65
+            strokeWidth: root.strokeWidth * 0.6
             strokeColor: root.baseStrokeColor
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
@@ -144,8 +154,8 @@ Item {
 
     }
 
-    // Travelling energy packets. Three small circles spaced evenly along the
-    // curve; they wrap around to keep the flow continuous.
+    // Travelling energy packets. Three circles spaced evenly along the curve;
+    // they scale and brighten with the draw fraction so high power is obvious.
     Item {
         anchors.fill: parent
         visible: !root.reduceMotion && !root.inert && root.effectiveFraction > 0.005
@@ -155,13 +165,15 @@ Item {
 
             Rectangle {
                 required property int index
+                readonly property real packetFraction: Math.max(0, Math.min(1, root.effectiveFraction))
+                readonly property real packetSize: Math.max(3, Style.spaceReal(3) + Style.spaceReal(4) * Math.pow(packetFraction, 0.5))
                 property real progress: index / 3
 
-                width: Math.max(4, Style.spaceReal(3))
-                height: width
+                width: packetSize
+                height: packetSize
                 radius: width / 2
                 color: root.accent
-                opacity: 0.9 - index * 0.22
+                opacity: 0.95 - index * 0.25 + 0.15 * packetFraction
                 x: root.bezierX(progress) - width / 2
                 y: root.bezierY(progress) - height / 2
 
