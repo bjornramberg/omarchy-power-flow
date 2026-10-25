@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "uth.power",
+  "name": "UTH Power",
+  "version": "0.2.0",
+  "author": "Björn Ramberg",
+  "description": "Live component power-flow visualization for Omarchy.",
+  "kinds": [
+    "bar-widget",
+    "panel"
+  ],
+  "entryPoints": {
+    "barWidget": "qml/BarTrigger.qml",
+    "panel": "qml/Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "UTH Power",
+    "description": "Open the live component power-flow panel.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
