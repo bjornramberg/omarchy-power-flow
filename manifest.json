@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "uth.power",
   "name": "UTH Power",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "Björn Ramberg",
   "description": "Live component power-flow visualization for Omarchy.",
   "kinds": [
