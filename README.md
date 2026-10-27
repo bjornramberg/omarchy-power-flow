@@ -60,5 +60,3 @@ SHA256SUMS                 Published hashes for bundled collector binaries
 ## License
 
 Omarchy Power Flow is released under the [MIT License](LICENSE).
-
-Copyright (c) 2026 Björn Ramberg.
