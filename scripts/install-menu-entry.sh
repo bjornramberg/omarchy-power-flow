@@ -8,7 +8,10 @@
 #   * it backs up the user's file before changing it;
 #   * it validates the resulting JSONC before replacing the original;
 #   * it never rewrites the file as plain JSON, so comments and formatting
-#     survive.
+#     survive;
+#   * it serializes concurrent installer/remover instances with a user-owned
+#     lock file next to the extension, and re-reads the target immediately
+#     before the atomic replacement so an out-of-band edit is never clobbered.
 #
 # The default mode installs the row.  "--remove" deletes only the plugin's own
 # root rows ("omarchy-power-flow" and the legacy "uth-power") and leaves every
@@ -79,12 +82,11 @@ if [[ "$mode" == install && ! -e "$target" ]]; then
       "$prog" "$template" >&2
     exit 1
   fi
-  mkdir -p -- "$(dirname -- "$target")"
-  cp -- "$template" "$target"
 fi
 
 set +e
-python3 - "$target" "$mode" "$prog" <<'PY'
+python3 - "$target" "$mode" "$prog" "$template" <<'PY'
+import fcntl
 import json
 import os
 import re
@@ -96,6 +98,7 @@ import time
 TARGET = sys.argv[1]
 MODE = sys.argv[2]
 PROG = sys.argv[3]
+TEMPLATE = sys.argv[4]
 NEW_KEY = "omarchy-power-flow"
 OLD_KEY = "uth-power"
 ICON = "\uf0e7"
@@ -482,6 +485,61 @@ def unique_backup(path):
     return candidate
 
 
+def read_target():
+    with open(TARGET, "r", encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+def ensure_target():
+    """Create the extension from the template when installing into an absent target."""
+    if os.path.exists(TARGET):
+        return
+    if MODE != "install":
+        return
+    directory = os.path.dirname(TARGET) or "."
+    os.makedirs(directory, exist_ok=True)
+    shutil.copyfile(TEMPLATE, TARGET)
+    shutil.copymode(TEMPLATE, TARGET)
+
+
+def acquire_lock():
+    """Take an exclusive lock beside the target so writers are serialized.
+
+    The lock is advisory and only shared by these helpers; it also protects
+    against concurrent install/remove runs from the same user.  The lock file
+    is intentionally left in place (removing it would reintroduce a lock race).
+    """
+    directory = os.path.dirname(TARGET) or "."
+    os.makedirs(directory, exist_ok=True)
+    lock_path = os.path.join(directory, ".omarchy-menu.jsonc.lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    os.fchmod(fd, 0o600)
+    handle = os.fdopen(fd, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except OSError:
+        handle.close()
+        raise
+    return handle
+
+
+def release_lock(handle):
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+def verify_unchanged(original):
+    """Abort when the target was edited after our initial read."""
+    try:
+        current = read_target()
+    except OSError as exc:
+        fail(f"cannot re-read {TARGET} before replacing it: {exc}; target left untouched")
+    if current != original:
+        fail(f"{TARGET} changed while it was being updated; target left untouched")
+
+
 def write_atomic(path, content):
     directory = os.path.dirname(path) or "."
     fd, temp_path = tempfile.mkstemp(prefix=".omarchy-menu.", suffix=".tmp", dir=directory)
@@ -500,10 +558,18 @@ def write_atomic(path, content):
         raise
 
 
-def main():
+def run():
     try:
-        with open(TARGET, "r", encoding="utf-8") as handle:
-            original = handle.read()
+        ensure_target()
+    except OSError as exc:
+        fail(f"cannot create {TARGET} from {TEMPLATE}: {exc}")
+
+    if MODE == "remove" and not os.path.exists(TARGET):
+        print(f"{PROG}: no user menu extension at {TARGET}; nothing to remove.")
+        return 0
+
+    try:
+        original = read_target()
     except OSError as exc:
         fail(f"cannot read {TARGET}: {exc}")
 
@@ -541,6 +607,7 @@ def main():
         except Exception as exc:
             fail(f"cannot back up {TARGET}: {exc}; target left untouched")
 
+        verify_unchanged(original)
         try:
             write_atomic(TARGET, candidate)
         except Exception as exc:
@@ -590,6 +657,7 @@ def main():
     except Exception as exc:
         fail(f"cannot back up {TARGET}: {exc}; target left untouched")
 
+    verify_unchanged(original)
     try:
         write_atomic(TARGET, candidate)
     except Exception as exc:
@@ -598,6 +666,17 @@ def main():
     print(f"{PROG}: {action} \"{NEW_KEY}\"", file=sys.stderr)
     print(f"{PROG}: backup: {backup}", file=sys.stderr)
     return 0
+
+
+def main():
+    try:
+        lock = acquire_lock()
+    except OSError as exc:
+        fail(f"cannot lock {TARGET}: {exc}")
+    try:
+        return run()
+    finally:
+        release_lock(lock)
 
 
 raise SystemExit(main())

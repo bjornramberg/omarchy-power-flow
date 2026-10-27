@@ -9,7 +9,9 @@
 #
 # It never uses sudo, backs up every file it rewrites, refuses to replace an
 # existing new plugin directory unless that directory's manifest declares the
-# new plugin id, and can be rerun safely.
+# new plugin id, and can be rerun safely.  When both the legacy and new plugin
+# directories are present, the legacy directory is archived beside it (never
+# deleted) so its data can be recovered.
 #
 # Run this from an up-to-date checkout of the new release. If the installed
 # plugin directory still contains the old code/manifest, update that checkout
@@ -30,6 +32,7 @@ readonly MENU_EXT="${HOME:+$HOME/.config/omarchy/extensions/omarchy-menu.jsonc}"
 actions=()
 warnings=()
 failures=0
+legacy_archive=""
 
 say() {
   printf 'migrate-from-uth-power: %s\n' "$*"
@@ -114,8 +117,14 @@ if [[ -e "$OLD_DIR" ]]; then
       fail "refusing to replace $NEW_DIR: manifest id is '$existing_id', expected '$NEW_ID'"
     fi
 
-    rm -rf -- "$OLD_DIR"
-    actions+=("removed stale legacy plugin directory $OLD_DIR (new directory already valid)")
+    # Never delete the legacy checkout: the new directory is valid, so archive
+    # the old data (including any local changes) beside the plugin directory.
+    legacy_archive=$(backup_path "$OLD_DIR")
+    if ! mv -T -- "$OLD_DIR" "$legacy_archive"; then
+      legacy_archive=""
+      fail "cannot archive $OLD_DIR; both directories left untouched"
+    fi
+    actions+=("archived legacy plugin directory $OLD_DIR -> $legacy_archive (new directory already valid)")
   else
     mv -T -- "$OLD_DIR" "$NEW_DIR"
     actions+=("moved $OLD_DIR -> $NEW_DIR")
@@ -151,39 +160,27 @@ with open(source, "r", encoding="utf-8") as handle:
     text = handle.read()
 
 # Validate before rewriting so a malformed file is never modified.
-json.loads(text)
+document = json.loads(text)
 
-out = []
-count = 0
-i = 0
-while i < len(text):
-    ch = text[i]
-    if ch != '"':
-        out.append(ch)
-        i += 1
-        continue
 
-    j = i + 1
-    while j < len(text):
-        if text[j] == "\\":
-            j += 2
-            continue
-        if text[j] == '"':
-            break
-        j += 1
-    token = text[i : j + 1]
-    try:
-        value = json.loads(token)
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"invalid string token in {source}: {exc}")
+def migrate(node):
+    """Rename only dictionary id fields; unrelated strings stay untouched."""
+    count = 0
+    if isinstance(node, dict):
+        if node.get("id") == OLD_ID:
+            node["id"] = NEW_ID
+            count += 1
+        for value in node.values():
+            count += migrate(value)
+    elif isinstance(node, list):
+        for value in node:
+            count += migrate(value)
+    return count
 
-    if value == OLD_ID:
-        token = json.dumps(NEW_ID)
-        count += 1
-    out.append(token)
-    i = j + 1
 
-candidate = "".join(out)
+count = migrate(document)
+candidate = json.dumps(document, indent=2, ensure_ascii=False) + "\n"
+# Round-trip check: never write a candidate that does not parse as JSON.
 json.loads(candidate)
 
 with open(destination, "w", encoding="utf-8", newline="") as handle:
@@ -256,6 +253,11 @@ say "summary:"
 for action in "${actions[@]}"; do
   say "  - $action"
 done
+
+if [[ -n "$legacy_archive" ]]; then
+  say "  - recovery path: $legacy_archive"
+  say "    delete the archived legacy data yourself once the new plugin is verified."
+fi
 
 if [[ ${#warnings[@]} -gt 0 ]]; then
   say "${#warnings[@]} warning(s) above."
