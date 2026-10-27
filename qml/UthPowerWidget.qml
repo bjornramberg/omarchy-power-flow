@@ -626,6 +626,22 @@ Item {
     }
 
     component CordLayer: Item {
+        id: cordLayerRoot
+
+        readonly property real sourceTotalW: root.sourceData && isFinite(Number(root.sourceData.total_draw_w)) ? Number(root.sourceData.total_draw_w) : 0
+        readonly property real maxComponentDrawW: {
+            var max = 0;
+            for (var i = 0; i < root.canonicalIds.length; i++) {
+                var c = root.componentById(root.canonicalIds[i]);
+                var w = c && c.draw_w !== undefined && c.draw_w !== null && isFinite(Number(c.draw_w)) ? Number(c.draw_w) : 0;
+                if (w > max)
+                    max = w;
+
+            }
+            return max;
+        }
+        readonly property real maxShare: cordLayerRoot.sourceTotalW > 0 ? cordLayerRoot.maxComponentDrawW / cordLayerRoot.sourceTotalW : 0
+
         Repeater {
             model: root.canonicalIds
 
@@ -633,6 +649,7 @@ Item {
                 required property string modelData
                 readonly property var endNode: root.nodeMap[modelData] || null
                 readonly property var endData: root.componentById(modelData)
+                readonly property real endDrawW: endData && endData.draw_w !== undefined && endData.draw_w !== null && isFinite(Number(endData.draw_w)) ? Number(endData.draw_w) : 0
 
                 anchors.fill: parent
                 startX: sourceHub ? sourceHub.x + sourceHub.width : 0
@@ -644,6 +661,9 @@ Item {
                 drawKind: endData && endData.draw_kind ? String(endData.draw_kind) : "measured"
                 utilizationPercent: endData && typeof endData.utilization_percent === "number" ? endData.utilization_percent : 0
                 activityPercent: endData && typeof endData.activity_percent === "number" ? endData.activity_percent : 0
+                sourceTotalW: cordLayerRoot.sourceTotalW
+                maxShare: cordLayerRoot.maxShare
+                isDominant: cordLayerRoot.sourceTotalW > 0 && endDrawW >= cordLayerRoot.maxComponentDrawW * 0.999
                 available: !!endData
                 dataLoaded: root.dataLoaded
                 stale: root.stale
