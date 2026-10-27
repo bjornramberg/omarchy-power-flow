@@ -7,15 +7,28 @@ draw.
 
 The plugin adds a compact bolt icon to the right side of the Omarchy bar. Activate it to open a bar-anchored power-flow dashboard; dismiss it with Escape, an outside click, or the same bar location. Directional energy packets move from the source toward each component, while stroke width, brightness, and packet energy make relative consumption visible at a glance.
 
+![Omarchy Power Flow](preview.png)
+
 ## Requirements
 
-- Omarchy with the current Quickshell shell
-- Linux with supported hardware telemetry (support is auto-detected)
-- `nvidia-smi` is optional and used only for NVIDIA GPUs
+- **Omarchy with the current Quickshell shell** — the only runtime platform
+  dependency.
+- **Linux hardware telemetry** — support is auto-detected for each component.
+- **Bundled collector** — the Go collector ships as prebuilt static amd64/arm64
+  binaries in `bin/`; no Go, Python, or other language runtime has to be
+  installed to run the plugin.
+- **`nvidia-smi` (optional)** — used only to read NVIDIA GPU power when no DRM
+  power rail is available; it is not needed on AMD, Intel, or other systems.
+- **No sudo or root** — installation, removal, and normal operation all run as
+  your user. CPU package energy counters are often root-only on Linux, so the
+  plugin uses a clearly marked load/frequency estimate instead of escalating.
 
-No elevated privileges are required. When CPU or RAM watt counters are not
-readable, the plugin uses clearly marked estimates together with exact load and
-usage percentages.
+When CPU or RAM watt counters are not readable, the plugin uses clearly marked
+estimates together with exact load and usage percentages.
+
+The optional Super-key menu helpers use the system `python3` to validate JSONC.
+That is the only Python use, it is confined to the menu install/remove scripts,
+and it is not needed at plugin runtime.
 
 ## Install
 
@@ -25,8 +38,9 @@ From the published repository:
 omarchy plugin add https://github.com/bjornramberg/omarchy-power-flow.git --enable
 ```
 
-The repository is named `omarchy-power-flow` and the plugin ID is
-`io.github.bjornramberg.omarchy-power-flow`.
+The repository is named `omarchy-power-flow`; the permanent plugin ID is
+`io.github.bjornramberg.omarchy-power-flow`. All other plugin, shell, and bar
+commands in this README use that ID.
 
 Then open or toggle the panel:
 
@@ -80,7 +94,32 @@ helper:
 The helper updates only `~/.config/omarchy/extensions/omarchy-menu.jsonc`,
 backs up the existing file, migrates an older `uth-power` row in place, and
 refreshes the menu. The mergeable source fragment is in
-`extensions/omarchy-menu.jsonc`.
+`extensions/omarchy-menu.jsonc`. Undo it with
+`./scripts/remove-menu-entry.sh` (see [Remove](#remove)).
+
+## Remove
+
+Remove the plugin from Omarchy by its permanent ID:
+
+```sh
+omarchy plugin remove io.github.bjornramberg.omarchy-power-flow
+```
+
+If you installed the optional Super-key menu row, remove that row from a
+checkout of this repository:
+
+```sh
+./scripts/remove-menu-entry.sh
+```
+
+The helper removes only the plugin's `omarchy-power-flow` row (and any legacy
+`uth-power` row), preserves unrelated rows and comments, backs up the target
+file, validates the resulting JSONC, and refreshes the menu. It is idempotent:
+when the row is already absent it reports that and exits successfully, without
+creating a backup or touching the file. It never uses sudo and only writes
+`~/.config/omarchy/extensions/omarchy-menu.jsonc`. The row's `when` guard
+already hides it once the plugin is uninstalled, so the menu cleanup can run
+before or after `omarchy plugin remove`.
 
 ## Local development
 
@@ -144,7 +183,7 @@ qml/AnimatedCord.qml       Continuous watt-share gradient and energy packets
 backend/                   Go sensor collector and tests
 bin/                       Static amd64/arm64 collector binaries and launcher
 extensions/                Optional Super-key menu row
-scripts/                   Build, menu installer, and identity migration
+scripts/                   Build, menu installer/remover, and identity migration
 TODO.md                    Optional one-time calibration plan
 ```
 
@@ -286,3 +325,9 @@ component IDs are `cpu`, `gpu`, `ram`, and `disk`. `draw_kind` distinguishes
 hardware measurements from estimates and utilization-only values; modeled
 components also include uncertainty and model provenance. `top_process` is
 optional activity metadata and never represents watts.
+
+## License
+
+Omarchy Power Flow is released under the [MIT License](LICENSE).
+
+Copyright (c) 2026 Björn Ramberg.
