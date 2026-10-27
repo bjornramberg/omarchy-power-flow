@@ -15,6 +15,10 @@ them. Omarchy Power Flow is designed to remain within that user account:
   absolute system paths, subprocess output is bounded, and execution has a
   two-second timeout.
 
+The plugin contains no helper that edits user configuration, and normal
+operation does not mutate user configuration. Installation, removal, and
+enable/disable are handled by Omarchy's plugin lifecycle.
+
 CPU and RAM power values may be estimates because Linux commonly restricts
 hardware energy counters. Those values are explicitly marked and must not be
 treated as measurements of a protected rail.
@@ -33,21 +37,6 @@ Verify the tracked binaries against clean builds with the pinned Go toolchain:
 
 Published hashes are recorded in `SHA256SUMS`. A mismatch means the tracked
 binary must be reviewed and rebuilt rather than installed blindly.
-
-## Optional configuration helpers
-
-The menu installer, menu remover, and legacy-ID migration script are never run
-automatically by `omarchy plugin add`. When explicitly invoked, they:
-
-- operate only inside the user's Omarchy configuration directory;
-- create backups before changing files;
-- validate JSON/JSONC before replacing a file;
-- preserve unrelated configuration;
-- serialize menu writes and abort if the target changed concurrently;
-- do not request elevated access.
-
-The migration script archives a duplicate legacy plugin directory rather than
-discarding it.
 
 ## Reporting a vulnerability
 
