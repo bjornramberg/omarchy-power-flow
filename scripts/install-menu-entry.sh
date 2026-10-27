@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the UTH Power row into the user's Omarchy menu extension.
+# Install the Omarchy Power Flow row into the user's Omarchy menu extension.
 #
 # This helper is intentionally conservative:
 #   * it only writes ~/.config/omarchy/extensions/omarchy-menu.jsonc;
@@ -9,10 +9,14 @@
 #   * it never rewrites the file as plain JSON, so comments and formatting
 #     survive.
 #
+# It is idempotent and also migrates an existing legacy "uth-power" row to the
+# current "omarchy-power-flow" key/label/action when that row is present. Only
+# the plugin's own root row is touched; unrelated rows are preserved verbatim.
+#
 # The embedded Python helper implements a minimal JSONC parser by stripping
 # comments and trailing commas (string-aware), then uses the standard-library
-# json module for semantic validation.  The actual insertion is brace-aware and
-# text-preserving.
+# json module for semantic validation.  The actual insertion/replacement is
+# brace-aware and text-preserving.
 #
 # OMARCHY_MENU_TEMPLATE may point at an alternate template for tests; normal
 # installs use the system path above and never write below /usr/share.
@@ -54,11 +58,16 @@ import tempfile
 import time
 
 TARGET = sys.argv[1]
+NEW_KEY = "omarchy-power-flow"
+OLD_KEY = "uth-power"
 ICON = "\uf0e7"
-LABEL = "UTH Power"
+LABEL = "Omarchy Power Flow"
 DESCRIPTION = "Live component power-flow panel"
-ACTION = "omarchy-shell shell toggle uth.power"
-WHEN = 'test -f "$HOME/.config/omarchy/plugins/uth.power/manifest.json"'
+ACTION = "omarchy-shell shell toggle io.github.bjornramberg.omarchy-power-flow"
+WHEN = (
+    'test -f "$HOME/.config/omarchy/plugins/'
+    'io.github.bjornramberg.omarchy-power-flow/manifest.json"'
+)
 ENTRY = {
     "icon": ICON,
     "label": LABEL,
@@ -152,6 +161,189 @@ def parse_jsonc(text):
         raise ValueError(str(exc)) from exc
 
 
+def skip_ws_comments(text, i):
+    """Advance past whitespace and comments, returning the next index."""
+    while i < len(text):
+        ch = text[i]
+        if ch in " \t\r\n":
+            i += 1
+            continue
+        if ch == "/" and i + 1 < len(text):
+            nxt = text[i + 1]
+            if nxt == "/":
+                newline = text.find("\n", i)
+                if newline < 0:
+                    return len(text)
+                i = newline + 1
+                continue
+            if nxt == "*":
+                end = text.find("*/", i + 2)
+                if end < 0:
+                    raise ValueError("unterminated block comment")
+                i = end + 2
+                continue
+        break
+    return i
+
+
+def scan_value_end(text, i):
+    """Return the exclusive end index of the JSON value starting at i."""
+    if i >= len(text):
+        raise ValueError("missing value")
+    ch = text[i]
+    if ch == '"':
+        _, end = read_string(text, i)
+        return end
+    if ch in "{[":
+        depth = 0
+        while i < len(text):
+            ch = text[i]
+            if ch == '"':
+                _, i = read_string(text, i)
+                continue
+            if ch == "/" and i + 1 < len(text) and text[i + 1] == "/":
+                newline = text.find("\n", i)
+                i = len(text) if newline < 0 else newline + 1
+                continue
+            if ch == "/" and i + 1 < len(text) and text[i + 1] == "*":
+                end = text.find("*/", i + 2)
+                if end < 0:
+                    raise ValueError("unterminated block comment")
+                i = end + 2
+                continue
+            if ch in "{[":
+                depth += 1
+            elif ch in "}]":
+                depth -= 1
+                if depth == 0:
+                    return i + 1
+            i += 1
+        raise ValueError("unterminated value")
+    while i < len(text) and text[i] not in ",}] \t\r\n":
+        i += 1
+    return i
+
+
+def root_members(text):
+    """Return top-level object member spans as dictionaries."""
+    i = skip_ws_comments(text, 0)
+    if i >= len(text) or text[i] != "{":
+        raise ValueError("root is not a JSON object")
+    i += 1
+    members = []
+    while True:
+        i = skip_ws_comments(text, i)
+        if i >= len(text):
+            raise ValueError("missing closing brace")
+        if text[i] == "}":
+            break
+        if text[i] != '"':
+            raise ValueError("expected a top-level key")
+        key_start = i
+        token, i = read_string(text, i)
+        key = json.loads(token)
+        i = skip_ws_comments(text, i)
+        if i >= len(text) or text[i] != ":":
+            raise ValueError(f"expected ':' after {key}")
+        i = skip_ws_comments(text, i + 1)
+        value_start = i
+        value_end = scan_value_end(text, i)
+        line_start = text.rfind("\n", 0, key_start) + 1
+        prefix = text[line_start:key_start]
+        indent = prefix if prefix.strip() == "" else detect_indent(text, key_start)
+        members.append({
+            "key": key,
+            "key_start": key_start,
+            "value_start": value_start,
+            "value_end": value_end,
+            "indent": indent,
+        })
+        i = skip_ws_comments(text, value_end)
+        if i < len(text) and text[i] == ",":
+            i += 1
+            continue
+        if i < len(text) and text[i] == "}":
+            continue
+        raise ValueError(f"expected ',' or '}}' after {key}")
+    return members
+
+
+def detect_indent(text, pos=None):
+    limit = len(text) if pos is None else pos
+    match = re.search(r'(?m)^([ \t]+)"', text[:limit])
+    return match.group(1) if match else "  "
+
+
+def closing_indent(text, close):
+    line_start = text.rfind("\n", 0, close) + 1
+    candidate = text[line_start:close]
+    return candidate if candidate.strip() == "" else ""
+
+
+def render_entry(indent, key=NEW_KEY):
+    quote = lambda value: json.dumps(value, ensure_ascii=False)
+    lines = [
+        f'{indent}"{key}": {{',
+        f'{indent}  "icon": {quote(ICON)},',
+        f'{indent}  "label": {quote(LABEL)},',
+        f'{indent}  "description": {quote(DESCRIPTION)},',
+        f'{indent}  "action": {quote(ACTION)},',
+        f'{indent}  "when": {quote(WHEN)}',
+        f'{indent}}}',
+    ]
+    return "\n".join(lines)
+
+
+def insert_entry(text, close, last_sig):
+    prefix = text[:close]
+    if last_sig is not None and text[last_sig] not in "{,":
+        # Add the missing separator immediately after the last value, before
+        # any trailing comment.  This also handles a normal final property.
+        prefix = prefix[: last_sig + 1] + "," + prefix[last_sig + 1 :]
+
+    indent = detect_indent(text, close)
+    close_indent = closing_indent(text, close)
+    new_prefix = (
+        prefix.rstrip(" \t\r\n")
+        + "\n"
+        + render_entry(indent)
+        + "\n"
+        + close_indent
+    )
+    return new_prefix + text[close:]
+
+
+def replace_member(text, member):
+    """Replace one top-level member, keeping its position and surrounding text."""
+    start = member["key_start"]
+    line_start = text.rfind("\n", 0, start) + 1
+    if text[line_start:start].strip() == "":
+        start = line_start
+    return text[:start] + render_entry(member["indent"]) + text[member["value_end"] :]
+
+
+def remove_member(text, member, members):
+    """Remove one top-level member and its separating comma."""
+    start = member["key_start"]
+    end = member["value_end"]
+
+    after = skip_ws_comments(text, end)
+    if after < len(text) and text[after] == ",":
+        end = after + 1
+    else:
+        before = start - 1
+        while before >= 0 and text[before] in " \t\r\n":
+            before -= 1
+        if before >= 0 and text[before] == ",":
+            start = before
+
+    # Trim the now-empty line left behind by a removed trailing member.
+    line_start = text.rfind("\n", 0, start) + 1
+    if text[line_start:start].strip() == "" and start > line_start:
+        start = line_start
+    return text[:start] + text[end:]
+
+
 def find_object_span(text):
     """Find the root object's closing brace and its last significant content."""
     i = 0
@@ -215,50 +407,6 @@ def find_object_span(text):
     return close, last_sig
 
 
-def detect_indent(text, close):
-    match = re.search(r'(?m)^([ \t]+)"', text[:close])
-    return match.group(1) if match else "  "
-
-
-def closing_indent(text, close):
-    line_start = text.rfind("\n", 0, close) + 1
-    candidate = text[line_start:close]
-    return candidate if candidate.strip() == "" else ""
-
-
-def render_entry(indent):
-    quote = lambda value: json.dumps(value, ensure_ascii=False)
-    lines = [
-        f'{indent}"uth-power": {{',
-        f'{indent}  "icon": {quote(ICON)},',
-        f'{indent}  "label": {quote(LABEL)},',
-        f'{indent}  "description": {quote(DESCRIPTION)},',
-        f'{indent}  "action": {quote(ACTION)},',
-        f'{indent}  "when": {quote(WHEN)}',
-        f'{indent}}}',
-    ]
-    return "\n".join(lines)
-
-
-def insert_entry(text, close, last_sig):
-    prefix = text[:close]
-    if last_sig is not None and text[last_sig] not in "{,":
-        # Add the missing separator immediately after the last value, before
-        # any trailing comment.  This also handles a normal final property.
-        prefix = prefix[: last_sig + 1] + "," + prefix[last_sig + 1 :]
-
-    indent = detect_indent(text, close)
-    close_indent = closing_indent(text, close)
-    new_prefix = (
-        prefix.rstrip(" \t\r\n")
-        + "\n"
-        + render_entry(indent)
-        + "\n"
-        + close_indent
-    )
-    return new_prefix + text[close:]
-
-
 def unique_backup(path):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     candidate = f"{path}.bak.{stamp}"
@@ -301,21 +449,42 @@ def main():
 
     if not isinstance(document, dict):
         fail(f"malformed target {TARGET}: root is not a JSON object; target left untouched")
-    if "uth-power" in document:
+
+    has_new = NEW_KEY in document
+    has_old = OLD_KEY in document
+
+    try:
+        members = root_members(original)
+        new_member = next((m for m in members if m["key"] == NEW_KEY), None)
+        old_member = next((m for m in members if m["key"] == OLD_KEY), None)
+    except Exception as exc:
+        fail(f"cannot inspect {TARGET}: {exc}; target left untouched")
+
+    if has_new and not has_old:
         return 10
 
     try:
-        close, last_sig = find_object_span(original)
-        candidate = insert_entry(original, close, last_sig)
+        if has_old and not has_new:
+            candidate = replace_member(original, old_member)
+            action = "migrated"
+        elif has_new and has_old:
+            candidate = remove_member(original, old_member, members)
+            action = "removed legacy row from"
+        else:
+            close, last_sig = find_object_span(original)
+            candidate = insert_entry(original, close, last_sig)
+            action = "added"
         candidate_document = parse_jsonc(candidate)
     except Exception as exc:
         fail(f"cannot update {TARGET}: {exc}; target left untouched")
 
     expected = dict(document)
-    expected["uth-power"] = ENTRY
+    expected.pop(OLD_KEY, None)
+    if not has_new:
+        expected[NEW_KEY] = ENTRY
     if candidate_document != expected:
         fail(f"internal validation failed for {TARGET}; target left untouched")
-    if candidate_document.get("uth-power") != ENTRY:
+    if not has_new and candidate_document.get(NEW_KEY) != ENTRY:
         fail(f"internal entry validation failed for {TARGET}; target left untouched")
 
     backup = unique_backup(TARGET)
@@ -329,6 +498,7 @@ def main():
     except Exception as exc:
         fail(f"cannot replace {TARGET}: {exc}; backup is {backup}")
 
+    print(f"install-menu-entry: {action} \"{NEW_KEY}\"", file=sys.stderr)
     print(f"install-menu-entry: backup: {backup}", file=sys.stderr)
     return 0
 
@@ -348,10 +518,10 @@ case "$status" in
       printf 'install-menu-entry: row installed, but "omarchy menu refresh" failed.\n' >&2
       exit 1
     fi
-    printf 'install-menu-entry: added "uth-power" to %s\n' "$target"
+    printf 'install-menu-entry: installed "omarchy-power-flow" in %s\n' "$target"
     ;;
   10)
-    printf 'install-menu-entry: "uth-power" already present; no changes.\n'
+    printf 'install-menu-entry: "omarchy-power-flow" already present; no changes.\n'
     ;;
   *)
     printf 'install-menu-entry: failed; target left unchanged.\n' >&2

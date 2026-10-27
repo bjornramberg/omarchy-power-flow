@@ -1,17 +1,18 @@
 {
-  // UTH Power row for the Omarchy/Quickshell Super-key menu.
+  // Omarchy Power Flow row for the Omarchy/Quickshell Super-key menu.
   //
   // Merge this object into ~/.config/omarchy/extensions/omarchy-menu.jsonc,
   // or run scripts/install-menu-entry.sh to splice it in automatically.
   //
-  // Keep the id at the root level. "uth-power" is intentional: a dotted id
-  // such as "uth.power" would make the menu infer a parent submenu.
-  "uth-power": {
+  // Keep the id at the root level. "omarchy-power-flow" is intentional: a
+  // dotted id such as "io.github.bjornramberg.omarchy-power-flow" would make
+  // the menu infer a parent submenu.
+  "omarchy-power-flow": {
     // Nerd Font bolt U+F0E7
-    "icon": "",
-    "label": "UTH Power",
+    "icon": "\uf0e7",
+    "label": "Omarchy Power Flow",
     "description": "Live component power-flow panel",
-    "action": "omarchy-shell shell toggle uth.power",
-    "when": "test -f \"$HOME/.config/omarchy/plugins/uth.power/manifest.json\""
+    "action": "omarchy-shell shell toggle io.github.bjornramberg.omarchy-power-flow",
+    "when": "test -f \"$HOME/.config/omarchy/plugins/io.github.bjornramberg.omarchy-power-flow/manifest.json\""
   }
 }

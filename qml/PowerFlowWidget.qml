@@ -1,4 +1,4 @@
-// Main dashboard for the UTH Power popup.
+// Main dashboard for the Omarchy Power Flow popup.
 
 import QtQuick
 import qs.Commons

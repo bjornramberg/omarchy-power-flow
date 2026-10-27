@@ -5,7 +5,7 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 
-// UTH Power bar widget and anchored popup.
+// Omarchy Power Flow bar widget and anchored popup.
 // The single bar-widget entry point owns the bolt icon, the collector process,
 // and the KeyboardPanel dashboard. Shell IPC summon/toggle/hide routes through
 // the Panel base.
@@ -53,7 +53,7 @@ Panel {
     readonly property int healthySampleThreshold: 10
     readonly property int healthyTimeThreshold: 15000
     readonly property string binaryPath: {
-        var url = String(Qt.resolvedUrl("../bin/uth-power") || "");
+        var url = String(Qt.resolvedUrl("../bin/omarchy-power-flow") || "");
         if (url.indexOf("file://") === 0)
             url = url.substring(7);
 
@@ -326,7 +326,7 @@ Panel {
             faultText = "Invalid telemetry";
         }
         if (!warnTimer.running) {
-            console.warn("UTH Power: " + reason);
+            console.warn("Omarchy Power Flow: " + reason);
             warnTimer.start();
         }
     }
@@ -364,15 +364,15 @@ Panel {
 
     function statusTooltip() {
         var status = root.permanentFailure ? "ERROR" : (root.retrying ? "RETRYING" : (root.stale ? "STALE" : (root.dataLoaded ? "LIVE" : "OFFLINE")));
-        var text = "UTH Power — " + status;
+        var text = "Omarchy Power Flow — " + status;
         if (root.faultText)
             text += "\n" + root.faultText;
 
         return text;
     }
 
-    moduleName: "uth.power"
-    ipcTarget: "uth.power"
+    moduleName: "io.github.bjornramberg.omarchy-power-flow"
+    ipcTarget: "io.github.bjornramberg.omarchy-power-flow"
     onOpenedChanged: {
         if (opened) {
             resetFailureBudget();
@@ -389,7 +389,7 @@ Panel {
         }
     }
     Component.onCompleted: {
-        console.info("UTH Power: plugin loaded; binary path: " + root.binaryPath);
+        console.info("Omarchy Power Flow: plugin loaded; binary path: " + root.binaryPath);
     }
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
@@ -531,7 +531,7 @@ Panel {
                 width: parent.width
                 spacing: Style.space(16)
 
-                UthPowerWidget {
+                PowerFlowWidget {
                     id: dashboard
 
                     width: parent.width
