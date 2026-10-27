@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install the Omarchy Power Flow row into the user's Omarchy menu extension.
+# Install or remove the Omarchy Power Flow row in the user's Omarchy menu
+# extension file.
 #
 # This helper is intentionally conservative:
 #   * it only writes ~/.config/omarchy/extensions/omarchy-menu.jsonc;
@@ -9,38 +10,73 @@
 #   * it never rewrites the file as plain JSON, so comments and formatting
 #     survive.
 #
-# It is idempotent and also migrates an existing legacy "uth-power" row to the
-# current "omarchy-power-flow" key/label/action when that row is present. Only
-# the plugin's own root row is touched; unrelated rows are preserved verbatim.
+# The default mode installs the row.  "--remove" deletes only the plugin's own
+# root rows ("omarchy-power-flow" and the legacy "uth-power") and leaves every
+# unrelated row and comment untouched.  Both modes are idempotent: install
+# no-ops when the row is already present, and --remove no-ops cleanly when it
+# is already absent.
 #
 # The embedded Python helper implements a minimal JSONC parser by stripping
 # comments and trailing commas (string-aware), then uses the standard-library
-# json module for semantic validation.  The actual insertion/replacement is
-# brace-aware and text-preserving.
+# json module for semantic validation.  The actual insertion/replacement/
+# removal is brace-aware and text-preserving.
 #
 # OMARCHY_MENU_TEMPLATE may point at an alternate template for tests; normal
 # installs use the system path above and never write below /usr/share.
+#
+# Usage: install-menu-entry.sh [--remove]
 set -euo pipefail
 
 readonly TEMPLATE_DEFAULT="/usr/share/omarchy/config/omarchy/extensions/omarchy-menu.jsonc"
 
+mode=install
+for arg in "$@"; do
+  case "$arg" in
+    --remove)
+      mode=remove
+      ;;
+    -h|--help)
+      printf 'Usage: %s [--remove]\n' "${0##*/}"
+      printf '  (no flag)  install the Omarchy Power Flow menu row\n'
+      printf '  --remove   remove the plugin menu row from the user extension\n'
+      exit 0
+      ;;
+    *)
+      printf '%s: unknown argument: %s\n' "${0##*/}" "$arg" >&2
+      printf 'Usage: %s [--remove]\n' "${0##*/}" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$mode" == remove ]]; then
+  prog=remove-menu-entry
+else
+  prog=install-menu-entry
+fi
+
 if [[ -z "${HOME:-}" ]]; then
-  printf 'install-menu-entry: HOME is not set.\n' >&2
+  printf '%s: HOME is not set.\n' "$prog" >&2
   exit 1
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
-  printf 'install-menu-entry: python3 is required but was not found.\n' >&2
+  printf '%s: python3 is required but was not found.\n' "$prog" >&2
   exit 1
 fi
 
 target="${HOME}/.config/omarchy/extensions/omarchy-menu.jsonc"
 template="${OMARCHY_MENU_TEMPLATE:-$TEMPLATE_DEFAULT}"
 
-if [[ ! -e "$target" ]]; then
+if [[ "$mode" == remove && ! -e "$target" ]]; then
+  printf '%s: no user menu extension at %s; nothing to remove.\n' "$prog" "$target"
+  exit 0
+fi
+
+if [[ "$mode" == install && ! -e "$target" ]]; then
   if [[ ! -f "$template" || ! -r "$template" ]]; then
-    printf 'install-menu-entry: target does not exist and template is unavailable: %s\n' \
-      "$template" >&2
+    printf '%s: target does not exist and template is unavailable: %s\n' \
+      "$prog" "$template" >&2
     exit 1
   fi
   mkdir -p -- "$(dirname -- "$target")"
@@ -48,7 +84,7 @@ if [[ ! -e "$target" ]]; then
 fi
 
 set +e
-python3 - "$target" <<'PY'
+python3 - "$target" "$mode" "$prog" <<'PY'
 import json
 import os
 import re
@@ -58,6 +94,8 @@ import tempfile
 import time
 
 TARGET = sys.argv[1]
+MODE = sys.argv[2]
+PROG = sys.argv[3]
 NEW_KEY = "omarchy-power-flow"
 OLD_KEY = "uth-power"
 ICON = "\uf0e7"
@@ -78,7 +116,7 @@ ENTRY = {
 
 
 def fail(message):
-    print(f"install-menu-entry: {message}", file=sys.stderr)
+    print(f"{PROG}: {message}", file=sys.stderr)
     raise SystemExit(1)
 
 
@@ -330,18 +368,45 @@ def remove_member(text, member, members):
     after = skip_ws_comments(text, end)
     if after < len(text) and text[after] == ",":
         end = after + 1
+        # Consume the removed row's line break so no blank line is left behind.
+        if text.startswith("\r\n", end):
+            end += 2
+        elif end < len(text) and text[end] == "\n":
+            end += 1
     else:
         before = start - 1
         while before >= 0 and text[before] in " \t\r\n":
             before -= 1
         if before >= 0 and text[before] == ",":
             start = before
+        else:
+            # This was the only member: consume its line break so the closing
+            # brace does not gain a blank line.
+            if text.startswith("\r\n", end):
+                end += 2
+            elif end < len(text) and text[end] == "\n":
+                end += 1
 
     # Trim the now-empty line left behind by a removed trailing member.
     line_start = text.rfind("\n", 0, start) + 1
     if text[line_start:start].strip() == "" and start > line_start:
         start = line_start
     return text[:start] + text[end:]
+
+
+def remove_plugin_rows(text, document):
+    """Remove the plugin's own top-level rows, preserving everything else."""
+    removed = []
+    for key in (NEW_KEY, OLD_KEY):
+        if key not in document:
+            continue
+        members = root_members(text)
+        member = next((m for m in members if m["key"] == key), None)
+        if member is None:
+            raise ValueError(f"cannot locate top-level {key} row")
+        text = remove_member(text, member, members)
+        removed.append(key)
+    return text, removed
 
 
 def find_object_span(text):
@@ -453,6 +518,38 @@ def main():
     has_new = NEW_KEY in document
     has_old = OLD_KEY in document
 
+    if MODE == "remove":
+        if not has_new and not has_old:
+            return 12
+        try:
+            candidate, removed = remove_plugin_rows(original, document)
+            candidate_document = parse_jsonc(candidate)
+        except Exception as exc:
+            fail(f"cannot update {TARGET}: {exc}; target left untouched")
+
+        expected = dict(document)
+        for key in removed:
+            expected.pop(key, None)
+        if candidate_document != expected:
+            fail(f"internal validation failed for {TARGET}; target left untouched")
+        if any(key in candidate_document for key in (NEW_KEY, OLD_KEY)):
+            fail(f"internal removal validation failed for {TARGET}; target left untouched")
+
+        backup = unique_backup(TARGET)
+        try:
+            shutil.copy2(TARGET, backup)
+        except Exception as exc:
+            fail(f"cannot back up {TARGET}: {exc}; target left untouched")
+
+        try:
+            write_atomic(TARGET, candidate)
+        except Exception as exc:
+            fail(f"cannot replace {TARGET}: {exc}; backup is {backup}")
+
+        print(f"{PROG}: removed {', '.join(removed)}", file=sys.stderr)
+        print(f"{PROG}: backup: {backup}", file=sys.stderr)
+        return 0
+
     try:
         members = root_members(original)
         new_member = next((m for m in members if m["key"] == NEW_KEY), None)
@@ -498,8 +595,8 @@ def main():
     except Exception as exc:
         fail(f"cannot replace {TARGET}: {exc}; backup is {backup}")
 
-    print(f"install-menu-entry: {action} \"{NEW_KEY}\"", file=sys.stderr)
-    print(f"install-menu-entry: backup: {backup}", file=sys.stderr)
+    print(f"{PROG}: {action} \"{NEW_KEY}\"", file=sys.stderr)
+    print(f"{PROG}: backup: {backup}", file=sys.stderr)
     return 0
 
 
@@ -508,23 +605,33 @@ PY
 status=$?
 set -e
 
+if [[ "$mode" == remove ]]; then
+  changed_word="removed"
+else
+  changed_word="installed"
+fi
+
 case "$status" in
   0)
     if ! command -v omarchy >/dev/null 2>&1; then
-      printf 'install-menu-entry: row installed, but omarchy was not found; run "omarchy menu refresh" manually.\n' >&2
+      printf '%s: row %s, but omarchy was not found; run "omarchy menu refresh" manually.\n' \
+        "$prog" "$changed_word" >&2
       exit 1
     fi
     if ! omarchy menu refresh; then
-      printf 'install-menu-entry: row installed, but "omarchy menu refresh" failed.\n' >&2
+      printf '%s: row %s, but "omarchy menu refresh" failed.\n' "$prog" "$changed_word" >&2
       exit 1
     fi
-    printf 'install-menu-entry: installed "omarchy-power-flow" in %s\n' "$target"
+    printf '%s: %s "omarchy-power-flow" in %s\n' "$prog" "$changed_word" "$target"
     ;;
   10)
-    printf 'install-menu-entry: "omarchy-power-flow" already present; no changes.\n'
+    printf '%s: "omarchy-power-flow" already present; no changes.\n' "$prog"
+    ;;
+  12)
+    printf '%s: "omarchy-power-flow" already absent; no changes.\n' "$prog"
     ;;
   *)
-    printf 'install-menu-entry: failed; target left unchanged.\n' >&2
+    printf '%s: failed; target left unchanged.\n' "$prog" >&2
     exit 1
     ;;
 esac
