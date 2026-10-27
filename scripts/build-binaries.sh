@@ -8,6 +8,7 @@ for arch in amd64 arm64; do
   output="$repo_root/bin/omarchy-power-flow-linux-$arch"
   printf 'Building %s\n' "$output"
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
+    -buildvcs=false \
     -trimpath \
     -ldflags='-s -w' \
     -o "$output" \
