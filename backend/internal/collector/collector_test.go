@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"uthpower/backend/internal/report"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/report"
 )
 
 func writeFile(t *testing.T, path, content string) {

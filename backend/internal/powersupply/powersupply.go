@@ -22,8 +22,8 @@ import (
 	"strconv"
 	"strings"
 
-	"uthpower/backend/internal/fsx"
-	"uthpower/backend/internal/units"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/fsx"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/units"
 )
 
 // Display names.  NameFallback is kept as a compatibility alias for callers

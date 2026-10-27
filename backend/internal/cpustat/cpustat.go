@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"uthpower/backend/internal/fsx"
-	"uthpower/backend/internal/units"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/fsx"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/units"
 )
 
 // Result is one utilization sample.

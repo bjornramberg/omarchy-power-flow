@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"uthpower/backend/internal/collector"
-	"uthpower/backend/internal/report"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/collector"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/report"
 )
 
 func TestRunOnceEmitsOneJSONLine(t *testing.T) {
@@ -122,7 +122,7 @@ func TestRunRecoversPanic(t *testing.T) {
 		t.Fatalf("stdout must stay empty on panic, got %q", stdout.String())
 	}
 	errText := stderr.String()
-	if !strings.Contains(errText, "uth-power: panic:") || !strings.Contains(errText, "uth-power: stack:") {
+	if !strings.Contains(errText, "omarchy-power-flow: panic:") || !strings.Contains(errText, "omarchy-power-flow: stack:") {
 		t.Fatalf("stderr missing panic diagnostics: %q", errText)
 	}
 	if len(errText) > 7000 {
@@ -138,7 +138,7 @@ func TestRunHelp(t *testing.T) {
 	if code := run(context.Background(), &stdout, &stderr, []string{"--help"}); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if !strings.Contains(stderr.String(), "Usage: uth-power") {
+	if !strings.Contains(stderr.String(), "Usage: omarchy-power-flow") {
 		t.Errorf("usage not printed: %q", stderr.String())
 	}
 }

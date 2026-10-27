@@ -1,6 +1,6 @@
-# UTH Power backend
+# Omarchy Power Flow backend
 
-A small, Linux-only, standard-library Go collector for **UTH Power**. It reads
+A small, Linux-only, standard-library Go collector for **Omarchy Power Flow**. It reads
 hardware power/activity sensors and writes one compact NDJSON object per line to
 stdout, one line per interval (1 second by default). The Quickshell frontend
 consumes those lines directly.
@@ -12,40 +12,40 @@ required.
 
 ```sh
 cd backend
-go build -o uth-power ./cmd/uth-power
+go build -o omarchy-power-flow ./cmd/omarchy-power-flow
 ```
 
 The binary is self-contained. Install it anywhere on `PATH`, for example:
 
 ```sh
-install -Dm755 uth-power ~/.local/bin/uth-power
+install -Dm755 omarchy-power-flow ~/.local/bin/omarchy-power-flow
 ```
 
 ## Usage
 
 ```sh
-uth-power                 # stream one JSON line per second
-uth-power --once          # one line and exit (verification / scripting)
-uth-power --interval 2s   # slower output
-uth-power --estimates off # measured values only (no CPU/RAM fallback)
-uth-power --processes off # omit CPU/RAM top-process metadata
-uth-power --root /tmp/fake-root --once   # hermetic sensor test
+omarchy-power-flow                 # stream one JSON line per second
+omarchy-power-flow --once          # one line and exit (verification / scripting)
+omarchy-power-flow --interval 2s   # slower output
+omarchy-power-flow --estimates off # measured values only (no CPU/RAM fallback)
+omarchy-power-flow --processes off # omit CPU/RAM top-process metadata
+omarchy-power-flow --root /tmp/fake-root --once   # hermetic sensor test
 ```
 
 Flags and environment:
 
 | Flag | Environment | Default | Meaning |
 | --- | --- | --- | --- |
-| `--root` | `UTH_POWER_ROOT` | `/` | Root containing `sys/` and `proc/` |
+| `--root` | `OMARCHY_POWER_FLOW_ROOT` | `/` | Root containing `sys/` and `proc/` |
 | `--interval` | - | `1s` | Streaming sample/output interval |
 | `--once` | - | `false` | Emit one object and exit |
 | `--warmup` | - | `250ms` | Prime delta sensors before the first output |
-| `--nvidia` | `UTH_POWER_NVIDIA` | `auto` | `auto`, `on`, or `off` |
+| `--nvidia` | `OMARCHY_POWER_FLOW_NVIDIA` | `auto` | `auto`, `on`, or `off` |
 | `--nvidia-smi` | - | `nvidia-smi` | Path to the NVIDIA tool |
-| `--estimates` | `UTH_POWER_ESTIMATES` | `auto` | `auto` or `off` |
-| `--processes` | `UTH_POWER_PROCESSES` | `auto` | `auto` or `off` |
+| `--estimates` | `OMARCHY_POWER_FLOW_ESTIMATES` | `auto` | `auto` or `off` |
+| `--processes` | `OMARCHY_POWER_FLOW_PROCESSES` | `auto` | `auto` or `off` |
 
-`--root` (or `UTH_POWER_ROOT`) prefixes both `/sys` and `/proc` lookups. This is
+`--root` (or `OMARCHY_POWER_FLOW_ROOT`) prefixes both `/sys` and `/proc` lookups. This is
 intended for tests and verification against a fake sysfs/procfs tree. In
 `auto` mode, `--root` also disables `nvidia-smi`, keeping verification
 hermetic. Use `--nvidia on` explicitly if a fake-root run should execute the
@@ -375,7 +375,7 @@ total-kind consistency, `--estimates=off`/`--processes=off`, powercap
 
 ```
 backend/
-  cmd/uth-power/          CLI, flags, streaming/one-shot loop
+  cmd/omarchy-power-flow/          CLI, flags, streaming/one-shot loop
   internal/collector/     sensor orchestration and component assembly
   internal/report/        v2 JSON contract (struct order is output order)
   internal/units/         explicit µJ/µW conversions, rounding, clamping

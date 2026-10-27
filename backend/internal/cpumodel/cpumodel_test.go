@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"uthpower/backend/internal/fsx"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/fsx"
 )
 
 func writeFile(t *testing.T, path, content string) {

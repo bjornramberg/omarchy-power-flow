@@ -1,4 +1,4 @@
-// Command uth-power collects Linux power telemetry and emits one compact JSON
+// Command omarchy-power-flow collects Linux power telemetry and emits one compact JSON
 // object per line on stdout.
 package main
 
@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"uthpower/backend/internal/collector"
-	"uthpower/backend/internal/report"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/collector"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/report"
 )
 
 const exitSoftware = 70 // EX_SOFTWARE
@@ -43,34 +43,34 @@ func main() {
 func run(ctx context.Context, stdout, stderr io.Writer, args []string) (exitCode int) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			fmt.Fprintf(stderr, "uth-power: panic: %s\n", boundedPanicText(recovered))
-			fmt.Fprintf(stderr, "uth-power: stack:\n%s\n", boundedStack())
+			fmt.Fprintf(stderr, "omarchy-power-flow: panic: %s\n", boundedPanicText(recovered))
+			fmt.Fprintf(stderr, "omarchy-power-flow: stack:\n%s\n", boundedStack())
 			exitCode = exitSoftware
 		}
 	}()
 
-	fs := flag.NewFlagSet("uth-power", flag.ContinueOnError)
+	fs := flag.NewFlagSet("omarchy-power-flow", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	rootDefault := os.Getenv("UTH_POWER_ROOT")
+	rootDefault := os.Getenv("OMARCHY_POWER_FLOW_ROOT")
 	if rootDefault == "" {
 		rootDefault = "/"
 	}
-	nvidiaDefault := os.Getenv("UTH_POWER_NVIDIA")
+	nvidiaDefault := os.Getenv("OMARCHY_POWER_FLOW_NVIDIA")
 	if nvidiaDefault == "" {
 		nvidiaDefault = "auto"
 	}
-	estimatesDefault := os.Getenv("UTH_POWER_ESTIMATES")
+	estimatesDefault := os.Getenv("OMARCHY_POWER_FLOW_ESTIMATES")
 	if estimatesDefault == "" {
 		estimatesDefault = "auto"
 	}
-	processesDefault := os.Getenv("UTH_POWER_PROCESSES")
+	processesDefault := os.Getenv("OMARCHY_POWER_FLOW_PROCESSES")
 	if processesDefault == "" {
 		processesDefault = "auto"
 	}
 
 	root := fs.String("root", rootDefault,
-		"filesystem root containing sys/ and proc/ (env UTH_POWER_ROOT)")
+		"filesystem root containing sys/ and proc/ (env OMARCHY_POWER_FLOW_ROOT)")
 	interval := fs.Duration("interval", time.Second,
 		"sampling and output interval in streaming mode")
 	once := fs.Bool("once", false,
@@ -78,16 +78,16 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) (exitCode
 	warmup := fs.Duration("warmup", 250*time.Millisecond,
 		"prime delta-based sensors for this long before emitting")
 	nvidiaMode := fs.String("nvidia", nvidiaDefault,
-		"nvidia-smi mode: auto, on or off (env UTH_POWER_NVIDIA)")
+		"nvidia-smi mode: auto, on or off (env OMARCHY_POWER_FLOW_NVIDIA)")
 	nvidiaSmi := fs.String("nvidia-smi", "nvidia-smi",
 		"path to nvidia-smi")
 	estimates := fs.String("estimates", estimatesDefault,
-		"CPU/RAM model mode: auto or off (env UTH_POWER_ESTIMATES)")
+		"CPU/RAM model mode: auto or off (env OMARCHY_POWER_FLOW_ESTIMATES)")
 	processes := fs.String("processes", processesDefault,
-		"top-process metadata mode: auto or off (env UTH_POWER_PROCESSES)")
+		"top-process metadata mode: auto or off (env OMARCHY_POWER_FLOW_PROCESSES)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: uth-power [flags]\n\n")
+		fmt.Fprintf(stderr, "Usage: omarchy-power-flow [flags]\n\n")
 		fmt.Fprintf(stderr, "Emits one compact JSON object per line to stdout. "+
 			"battery_percentage is -1 when no battery\ncapacity is available; "+
 			"unreadable measured components are omitted and modeled values are marked.\n\n")
@@ -101,30 +101,30 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) (exitCode
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "uth-power: unexpected arguments: %v\n", fs.Args())
+		fmt.Fprintf(stderr, "omarchy-power-flow: unexpected arguments: %v\n", fs.Args())
 		return 2
 	}
 	if *interval <= 0 {
-		fmt.Fprintln(stderr, "uth-power: --interval must be positive")
+		fmt.Fprintln(stderr, "omarchy-power-flow: --interval must be positive")
 		return 2
 	}
 	if *warmup < 0 {
-		fmt.Fprintln(stderr, "uth-power: --warmup must not be negative")
+		fmt.Fprintln(stderr, "omarchy-power-flow: --warmup must not be negative")
 		return 2
 	}
 	mode, err := collector.ParseNvidiaMode(*nvidiaMode)
 	if err != nil {
-		fmt.Fprintf(stderr, "uth-power: %v\n", err)
+		fmt.Fprintf(stderr, "omarchy-power-flow: %v\n", err)
 		return 2
 	}
 	estMode, err := collector.ParseEstimatesMode(*estimates)
 	if err != nil {
-		fmt.Fprintf(stderr, "uth-power: %v\n", err)
+		fmt.Fprintf(stderr, "omarchy-power-flow: %v\n", err)
 		return 2
 	}
 	procMode, err := collector.ParseProcessesMode(*processes)
 	if err != nil {
-		fmt.Fprintf(stderr, "uth-power: %v\n", err)
+		fmt.Fprintf(stderr, "omarchy-power-flow: %v\n", err)
 		return 2
 	}
 
@@ -156,16 +156,16 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) (exitCode
 		// encoding error therefore cannot leave a partial JSON object behind.
 		line, err := report.MarshalLine(c.Sample())
 		if err != nil {
-			fmt.Fprintf(stderr, "uth-power: encoding output: %v\n", err)
+			fmt.Fprintf(stderr, "omarchy-power-flow: encoding output: %v\n", err)
 			return false
 		}
 		n, err := stdout.Write(line)
 		if err != nil {
-			fmt.Fprintf(stderr, "uth-power: writing output: %v\n", err)
+			fmt.Fprintf(stderr, "omarchy-power-flow: writing output: %v\n", err)
 			return false
 		}
 		if n != len(line) {
-			fmt.Fprintf(stderr, "uth-power: short write: %d of %d bytes\n", n, len(line))
+			fmt.Fprintf(stderr, "omarchy-power-flow: short write: %d of %d bytes\n", n, len(line))
 			return false
 		}
 		return true

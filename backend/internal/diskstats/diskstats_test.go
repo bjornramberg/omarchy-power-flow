@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"uthpower/backend/internal/fsx"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/fsx"
 )
 
 func diskLine(name string, ioTicks uint64) string {

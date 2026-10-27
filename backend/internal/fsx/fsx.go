@@ -2,7 +2,7 @@
 //
 // Production uses the real filesystem root.  Tests and verification runs can
 // point Root at a temporary directory containing fake sys/ and proc/ trees via
-// the --root flag or UTH_POWER_ROOT environment variable.
+// the --root flag or OMARCHY_POWER_FLOW_ROOT environment variable.
 package fsx
 
 import (

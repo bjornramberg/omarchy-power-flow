@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"uthpower/backend/internal/fsx"
+	"github.com/bjornramberg/omarchy-power-flow/backend/internal/fsx"
 )
 
 // Vendor identifies the x86 CPU vendor.
