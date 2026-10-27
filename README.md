@@ -19,9 +19,10 @@ The plugin adds a compact bolt icon to the right side of the Omarchy bar. Activa
   installed to run the plugin.
 - **`nvidia-smi` (optional)** — used only to read NVIDIA GPU power when no DRM
   power rail is available; it is not needed on AMD, Intel, or other systems.
-- **No sudo or root** — installation, removal, and normal operation all run as
-  your user. CPU package energy counters are often root-only on Linux, so the
-  plugin uses a clearly marked load/frequency estimate instead of escalating.
+- **Unprivileged by design** — installation, removal, and normal operation all
+  run as your user. CPU package energy counters are often privileged on Linux,
+  so the plugin uses a clearly marked load/frequency estimate instead of
+  requesting additional access.
 
 When CPU or RAM watt counters are not readable, the plugin uses clearly marked
 estimates together with exact load and usage percentages.
@@ -74,9 +75,9 @@ The script moves `~/.config/omarchy/plugins/uth.power` to
 `~/.config/omarchy/plugins/io.github.bjornramberg.omarchy-power-flow`, updates
 the plugin id in `~/.config/omarchy/shell.json`, and migrates the legacy
 `uth-power` menu row to `omarchy-power-flow`. It backs up the files it rewrites,
-requests a plugin rescan and menu refresh, never uses sudo, and is safe to
-rerun. It refuses to replace an existing new plugin directory unless that
-directory's manifest declares the new ID.
+requests a plugin rescan and menu refresh, stays entirely within your user
+account, and is safe to rerun. It refuses to replace an existing new plugin
+directory unless that directory's manifest declares the new ID.
 
 If the installed plugin checkout still contains the old release, update it
 before migrating so the moved directory already carries the new identity.
@@ -116,7 +117,7 @@ The helper removes only the plugin's `omarchy-power-flow` row (and any legacy
 `uth-power` row), preserves unrelated rows and comments, backs up the target
 file, validates the resulting JSONC, and refreshes the menu. It is idempotent:
 when the row is already absent it reports that and exits successfully, without
-creating a backup or touching the file. It never uses sudo and only writes
+creating a backup or touching the file. It only writes
 `~/.config/omarchy/extensions/omarchy-menu.jsonc`. The row's `when` guard
 already hides it once the plugin is uninstalled, so the menu cleanup can run
 before or after `omarchy plugin remove`.
@@ -162,7 +163,12 @@ panel.
 
 ```sh
 ./scripts/build-binaries.sh
+./scripts/verify-binaries.sh
+sha256sum -c SHA256SUMS
 ```
+
+`verify-binaries.sh` rebuilds both architectures with the pinned Go toolchain
+and compares them byte-for-byte with the tracked binaries.
 
 Run the backend checks with:
 
@@ -183,7 +189,9 @@ qml/AnimatedCord.qml       Continuous watt-share gradient and energy packets
 backend/                   Go sensor collector and tests
 bin/                       Static amd64/arm64 collector binaries and launcher
 extensions/                Optional Super-key menu row
-scripts/                   Build, menu installer/remover, and identity migration
+scripts/                   Build, verification, menu helpers, and migration
+SHA256SUMS                 Published hashes for bundled collector binaries
+SECURITY.md                Security model, build provenance, and reporting
 TODO.md                    Optional one-time calibration plan
 ```
 
@@ -300,7 +308,7 @@ Each stdout line has this shape:
         "unit": "percent_of_machine",
         "core_percent": 100.0,
         "window_ms": 1000,
-        "scope": "all_processes",
+        "scope": "visible_processes",
         "source": "proc:stat",
         "ok": true
       }
