@@ -1,6 +1,6 @@
-# UTH Power
+# Omarchy Power Flow
 
-UTH Power is an Omarchy shell plugin that turns live component power readings
+Omarchy Power Flow (UTH Power) is an Omarchy shell plugin that turns live component power readings
 into an animated power-flow panel. A source node feeds CPU, GPU, RAM, and disk
 nodes through Bezier cords; faster flow represents a larger power draw.
 
@@ -13,16 +13,19 @@ The plugin adds a compact bolt icon to the right side of the Omarchy bar. Activa
 - `nvidia-smi` is optional and used only for NVIDIA GPUs
 
 No elevated privileges are required. When CPU or RAM watt counters are not
-readable, UTH Power uses clearly marked estimates together with exact load and
+readable, the plugin uses clearly marked estimates together with exact load and
 usage percentages.
 
 ## Install
 
-From a published repository:
+From the published repository:
 
 ```sh
-omarchy plugin add https://github.com/<owner>/uth-power.git --enable
+omarchy plugin add https://github.com/bjornramberg/omarchy-power-flow.git --enable
 ```
+
+The repository is named `omarchy-power-flow`; the installed plugin ID remains
+`uth.power` so existing installations and configurations continue to work.
 
 Then open or toggle the panel:
 
@@ -140,7 +143,7 @@ The source total is the sum of the visible component readings and is therefore
 wall-plug measurement and does not include unmeasured components.
 
 CPU package energy counters are commonly restricted to root on current Linux
-kernels. UTH Power itself needs no elevated privileges, so the CPU fallback is
+kernels. The plugin itself needs no elevated privileges, so the CPU fallback is
 a load/frequency model rather than a hardware measurement.
 
 ### Process insights
@@ -154,7 +157,7 @@ provide without privileges:
 
 These are activity indicators, not power attribution. Linux does not expose
 per-process DRAM or GPU watts, and process I/O permissions are incomplete, so
-UTH Power intentionally does not make disk/GPU process-power claims.
+The plugin intentionally does not make disk/GPU process-power claims.
 
 The collector performs one bounded `/proc/<pid>/stat` scan per second. It
 measures about 5 ms per scan on a roughly 460-process host. Disable it with:
