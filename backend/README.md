@@ -15,7 +15,9 @@ cd backend
 go build -o omarchy-power-flow ./cmd/omarchy-power-flow
 ```
 
-The binary is self-contained. Install it anywhere on `PATH`, for example:
+The module pins the Go toolchain to `go1.27.3` while keeping a compatible
+language level. The binary is self-contained. Install it anywhere on `PATH`,
+for example:
 
 ```sh
 install -Dm755 omarchy-power-flow ~/.local/bin/omarchy-power-flow
@@ -41,7 +43,7 @@ Flags and environment:
 | `--once` | - | `false` | Emit one object and exit |
 | `--warmup` | - | `250ms` | Prime delta sensors before the first output |
 | `--nvidia` | `OMARCHY_POWER_FLOW_NVIDIA` | `auto` | `auto`, `on`, or `off` |
-| `--nvidia-smi` | - | `nvidia-smi` | Path to the NVIDIA tool |
+| `--nvidia-smi` | - | trusted system path | Explicit path override; default tries `/usr/bin/nvidia-smi` then `/usr/local/bin/nvidia-smi` |
 | `--estimates` | `OMARCHY_POWER_FLOW_ESTIMATES` | `auto` | `auto` or `off` |
 | `--processes` | `OMARCHY_POWER_FLOW_PROCESSES` | `auto` | `auto` or `off` |
 
@@ -50,6 +52,14 @@ intended for tests and verification against a fake sysfs/procfs tree. In
 `auto` mode, `--root` also disables `nvidia-smi`, keeping verification
 hermetic. Use `--nvidia on` explicitly if a fake-root run should execute the
 real tool.
+
+Implicit `nvidia-smi` discovery does **not** search `PATH`. It tries the
+trusted absolute paths `/usr/bin/nvidia-smi` then
+`/usr/local/bin/nvidia-smi`. If neither exists, NVIDIA support is unavailable
+unless `--nvidia-smi` supplies an explicit path. The helper is run directly
+with an argument array, has a 2 second timeout, and captures at most 64 KiB of
+stdout and 64 KiB of stderr. Exceeding either bound terminates and reaps the
+child, and the sample is treated as unavailable.
 
 The collector takes an initial warm-up sample and discards it. Delta-based
 sources (RAPL/AMD energy counters, GPU energy counters, `/proc/diskstats` io
@@ -64,7 +74,7 @@ preserved. `schema_version` is always first, and existing source/component
 fields keep their order. New metadata fields are appended.
 
 ```json
-{"schema_version":2,"source":{"name":"AC","total_draw_w":157.05,"battery_percentage":87,"total_draw_kind":"mixed","power_mode":"ac","battery_status":"charging"},"components":[{"id":"cpu","label":"CPU","draw_w":64.4,"max_w":142,"activity_percent":100,"draw_kind":"modeled","draw_source":"model:cpu-load/1","utilization_percent":100,"uncertainty_percent":35,"model":{"id":"cpu-load/1","assumptions":{"class":"ryzen-7-5800x","cores":8,"exact_model":true,"form_factor":"desktop","formula":"idle + (peak-idle) * clamp(util * freq_ratio^1.5)","frequency_ratio":0.5,"frequency_used":true,"idle_w":22,"peak_w":142,"tdp_w":105,"vendor":"amd"}},"top_process":{"pid":4242,"name":"firefox","metric":"cpu","value":25,"unit":"percent_of_machine","core_percent":50,"window_ms":1000,"scope":"all_processes","source":"proc:stat","ok":true}},{"id":"gpu","label":"GPU","draw_w":85,"max_w":300,"activity_percent":28,"draw_kind":"measured","draw_source":"hwmon:amdgpu"},{"id":"ram","label":"RAM","draw_w":2.4,"max_w":5.6,"activity_percent":0,"draw_kind":"modeled","draw_source":"model:ram-capacity/1","utilization_percent":50,"uncertainty_percent":50,"model":{"id":"ram-capacity/1","assumptions":{"active_w_per_gib":0.35,"capacity_gib":16,"cpu_available":true,"formula":"idle + (max-idle) * clamp(0.75 * mem_pressure_avg10 + 0.25 * cpu_util)","idle_w_per_gib":0.15,"pressure_available":true}}},{"id":"disk","label":"DISK","draw_w":5.25,"max_w":10,"activity_percent":50,"draw_kind":"modeled","draw_source":"model:disk-busy/1","uncertainty_percent":50,"model":{"id":"disk-busy/1","assumptions":{"activity":"sum(io_ticks delta) / elapsed","full_w":10,"idle_w":0.5}}}]}
+{"schema_version":2,"source":{"name":"AC","total_draw_w":157.05,"battery_percentage":87,"total_draw_kind":"mixed","power_mode":"ac","battery_status":"charging"},"components":[{"id":"cpu","label":"CPU","draw_w":64.4,"max_w":142,"activity_percent":100,"draw_kind":"modeled","draw_source":"model:cpu-load/1","utilization_percent":100,"uncertainty_percent":35,"model":{"id":"cpu-load/1","assumptions":{"class":"ryzen-7-5800x","cores":8,"exact_model":true,"form_factor":"desktop","formula":"idle + (peak-idle) * clamp(util * freq_ratio^1.5)","frequency_ratio":0.5,"frequency_used":true,"idle_w":22,"peak_w":142,"tdp_w":105,"vendor":"amd"}},"top_process":{"pid":4242,"name":"firefox","metric":"cpu","value":25,"unit":"percent_of_machine","core_percent":50,"window_ms":1000,"scope":"visible_processes","source":"proc:stat","ok":true}},{"id":"gpu","label":"GPU","draw_w":85,"max_w":300,"activity_percent":28,"draw_kind":"measured","draw_source":"hwmon:amdgpu"},{"id":"ram","label":"RAM","draw_w":2.4,"max_w":5.6,"activity_percent":0,"draw_kind":"modeled","draw_source":"model:ram-capacity/1","utilization_percent":50,"uncertainty_percent":50,"model":{"id":"ram-capacity/1","assumptions":{"active_w_per_gib":0.35,"capacity_gib":16,"cpu_available":true,"formula":"idle + (max-idle) * clamp(0.75 * mem_pressure_avg10 + 0.25 * cpu_util)","idle_w_per_gib":0.15,"pressure_available":true}}},{"id":"disk","label":"DISK","draw_w":5.25,"max_w":10,"activity_percent":50,"draw_kind":"modeled","draw_source":"model:disk-busy/1","uncertainty_percent":50,"model":{"id":"disk-busy/1","assumptions":{"activity":"sum(io_ticks delta) / elapsed","full_w":10,"idle_w":0.5}}}]}
 ```
 
 Top level contains exactly `schema_version`, `source` and `components`.
@@ -170,10 +180,15 @@ Details and edge handling:
   Intel `i915`/`xe` may expose only `energy1_input` (µJ); that is sampled as a
   delta and converted to average watts. Only known GPU drivers are accepted.
   Multiple GPUs are aggregated.
-- **NVIDIA** — `nvidia-smi` output is parsed only when the process exits `0`
-  and numeric CSV fields parse; diagnostics printed to stdout on a failed run
-  are ignored. When it succeeds, NVIDIA hwmon entries (`nouveau`/`nvidia`) are
-  skipped to avoid double counting. It has a 2 second timeout and failures are
+- **NVIDIA** — implicit discovery is limited to trusted absolute paths
+  (`/usr/bin/nvidia-smi`, then `/usr/local/bin/nvidia-smi`); PATH is never
+  searched. `--nvidia-smi` may override the path explicitly. The helper runs
+  via direct exec with an argument array, has a 2 second timeout, and captures
+  at most 64 KiB each of stdout/stderr; overflow terminates and reaps the
+  child and makes the sample unavailable. Output is parsed only when the
+  process exits `0` and numeric fields parse, so diagnostics printed on a
+  failed run are ignored. When it succeeds, NVIDIA hwmon entries
+  (`nouveau`/`nvidia`) are skipped to avoid double counting. Failures are
   silent.
 - **Battery** — multiple system batteries are averaged, weighted by
   `energy_full`/`charge_full`. Peripheral batteries (`scope=Device`) and
@@ -293,8 +308,9 @@ CPU top process:
   `0..100`.
 - `core_percent = delta ticks / CLK_TCK / elapsed_seconds * 100`; this may
   exceed 100 for a multi-threaded process.
-- `window_ms` is the scan interval; `scope: "all_processes"`;
-  `source: "proc:stat"`.
+- `window_ms` is the scan interval; `scope: "visible_processes"`;
+  `source: "proc:stat"`. The scope is deliberately limited to processes
+  visible during the scan: unreadable or exiting `/proc` entries are skipped.
 - Comm is parsed by the last `)` so spaces, parentheses and newlines are safe.
   Zombies, PID ≤ 2, and kernel threads (`PF_KTHREAD`) are skipped. PID reuse is
   detected via `(pid, starttime)`. Child times (`cutime`/`cstime`) are not
@@ -307,10 +323,11 @@ RAM top process:
 
 The scan is capped at about 1200 PIDs and a 10 ms wall-clock budget. If the
 scan is unprimed, incomplete, or over budget, `top_process` is omitted rather
-than reporting zero or partial coverage. `--processes off` skips the scan
-entirely. On the development host (8-core Ryzen 7 5800X, 458 PIDs), the
-benchmark scan took about **5.1 ms** per sample and stayed under the 10 ms
-budget.
+than reporting zero or partial coverage. Individual unreadable or churning
+`/proc` entries do not suppress the metric; they are simply outside the
+visible-process scope. `--processes off` skips the scan entirely. On the
+development host (8-core Ryzen 7 5800X, 458 PIDs), the benchmark scan took
+about **5.1 ms** per sample and stayed under the 10 ms budget.
 
 ## Disk estimate (`model:disk-busy/1`)
 
@@ -369,7 +386,9 @@ fixtures (idle, full load, frequency, no-frequency, VM/non-x86/missing proc
 stat), RAM model fixtures (16 GiB idle/busy, occupancy does not scale watts,
 missing/overflowing MemTotal), disk numbers unchanged and marked modeled,
 total-kind consistency, `--estimates=off`/`--processes=off`, powercap
-`enabled=0` monitoring, plus the v1 sensor parsing/filtering tests.
+`enabled=0` monitoring, NVIDIA trusted-path selection/PATH refusal, subprocess
+output-limit termination and timeout, plus the v1 sensor parsing/filtering
+tests.
 
 ## Layout
 

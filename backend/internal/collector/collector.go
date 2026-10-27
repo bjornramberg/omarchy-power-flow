@@ -177,23 +177,21 @@ func New(opts Options) *Collector {
 		c.processes = procmetrics.New(fs, procmetrics.Options{})
 	}
 
-	path := opts.NvidiaSmiPath
-	if path == "" {
-		path = "nvidia-smi"
-	}
-	available := opts.NvidiaRunner != nil
-	if !available && opts.NvidiaMode != NvidiaOff &&
-		(opts.NvidiaMode == NvidiaOn || fs.IsDefault()) {
-		available = nvidia.Available(path)
-	}
+	path := ""
 	enable := false
-	switch opts.NvidiaMode {
-	case NvidiaOff:
-		enable = false
-	case NvidiaOn:
-		enable = available
-	case NvidiaAuto:
-		enable = available && fs.IsDefault()
+	if opts.NvidiaMode != NvidiaOff && (opts.NvidiaMode == NvidiaOn || fs.IsDefault()) {
+		if opts.NvidiaRunner != nil {
+			// Injected runner: keep a non-PATH logical path for tests.  The
+			// fake runner ignores it; a real exec would fail rather than
+			// searching PATH.
+			path = opts.NvidiaSmiPath
+			if path == "" {
+				path = "/nonexistent/injected-nvidia-smi"
+			}
+			enable = true
+		} else {
+			path, enable = nvidia.Resolve(opts.NvidiaSmiPath)
+		}
 	}
 	if enable {
 		c.nvidia = &nvidia.Reader{

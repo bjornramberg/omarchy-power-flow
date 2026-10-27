@@ -586,7 +586,7 @@ func TestCollectorTopProcesses(t *testing.T) {
 	if topCPU.CorePercent == nil || *topCPU.CorePercent != 100 {
 		t.Errorf("CPU core percent = %v, want 100", topCPU.CorePercent)
 	}
-	if topCPU.WindowMS != 1000 || topCPU.Scope != "all_processes" || topCPU.Source != "proc:stat" || !topCPU.OK {
+	if topCPU.WindowMS != 1000 || topCPU.Scope != "visible_processes" || topCPU.Source != "proc:stat" || !topCPU.OK {
 		t.Errorf("CPU top metadata = %+v", topCPU)
 	}
 

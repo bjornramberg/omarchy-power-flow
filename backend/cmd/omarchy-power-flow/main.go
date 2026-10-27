@@ -79,8 +79,8 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) (exitCode
 		"prime delta-based sensors for this long before emitting")
 	nvidiaMode := fs.String("nvidia", nvidiaDefault,
 		"nvidia-smi mode: auto, on or off (env OMARCHY_POWER_FLOW_NVIDIA)")
-	nvidiaSmi := fs.String("nvidia-smi", "nvidia-smi",
-		"path to nvidia-smi")
+	nvidiaSmi := fs.String("nvidia-smi", "",
+		"nvidia-smi path (default: trusted /usr/bin or /usr/local/bin)")
 	estimates := fs.String("estimates", estimatesDefault,
 		"CPU/RAM model mode: auto or off (env OMARCHY_POWER_FLOW_ESTIMATES)")
 	processes := fs.String("processes", processesDefault,

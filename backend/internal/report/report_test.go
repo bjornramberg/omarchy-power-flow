@@ -89,7 +89,7 @@ func TestTopProcessJSON(t *testing.T) {
 				PID: 4242, Name: "firefox", Metric: TopMetricCPU,
 				Value: 12.5, Unit: "percent_of_machine",
 				CorePercent: Float64Ptr(50), WindowMS: 1000,
-				Scope: "all_processes", Source: "proc:stat", OK: true,
+				Scope: "visible_processes", Source: "proc:stat", OK: true,
 			},
 		}},
 	})
@@ -100,7 +100,7 @@ func TestTopProcessJSON(t *testing.T) {
 	if !strings.Contains(out, `"power_mode":"battery","battery_status":"discharging"`) {
 		t.Errorf("source state missing: %s", out)
 	}
-	wantTop := `"top_process":{"pid":4242,"name":"firefox","metric":"cpu","value":12.5,"unit":"percent_of_machine","core_percent":50,"window_ms":1000,"scope":"all_processes","source":"proc:stat","ok":true}`
+	wantTop := `"top_process":{"pid":4242,"name":"firefox","metric":"cpu","value":12.5,"unit":"percent_of_machine","core_percent":50,"window_ms":1000,"scope":"visible_processes","source":"proc:stat","ok":true}`
 	if !strings.Contains(out, wantTop) {
 		t.Errorf("top_process missing/unexpected:\n%s\nwant substring: %s", out, wantTop)
 	}
@@ -202,7 +202,7 @@ func TestNormalizeNonFiniteAndBounds(t *testing.T) {
 					PID: 1, Name: "x", Metric: TopMetricCPU,
 					Value: 500, Unit: "percent_of_machine",
 					CorePercent: Float64Ptr(math.NaN()), WindowMS: -1,
-					Scope: "all_processes", Source: "proc:stat", OK: true,
+					Scope: "visible_processes", Source: "proc:stat", OK: true,
 				},
 			},
 			{

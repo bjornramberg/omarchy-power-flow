@@ -39,8 +39,8 @@ const (
 	UnitPercentOfMachine = "percent_of_machine"
 	UnitBytes            = "bytes"
 
-	ScopeAllProcesses = "all_processes"
-	SourceProcStat    = "proc:stat"
+	ScopeVisibleProcesses = "visible_processes"
+	SourceProcStat        = "proc:stat"
 )
 
 // Options configures a Scanner.  Zero values select defaults.
@@ -188,7 +188,7 @@ func (s *Scanner) Sample(now time.Time, machineDeltaTicks uint64) Result {
 			rssBest = &Metric{
 				PID: pid, Name: name, Metric: MetricRSS,
 				Value: float64(rss), Unit: UnitBytes,
-				WindowMS: 0, Scope: ScopeAllProcesses,
+				WindowMS: 0, Scope: ScopeVisibleProcesses,
 				Source: SourceProcStat, OK: true,
 			}
 		}
@@ -203,7 +203,7 @@ func (s *Scanner) Sample(now time.Time, machineDeltaTicks uint64) Result {
 					PID: pid, Name: name, Metric: MetricCPU,
 					Unit:     UnitPercentOfMachine,
 					WindowMS: int(math.Round(elapsed * 1000)),
-					Scope:    ScopeAllProcesses, Source: SourceProcStat, OK: true,
+					Scope:    ScopeVisibleProcesses, Source: SourceProcStat, OK: true,
 				}
 			}
 		}

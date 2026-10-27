@@ -103,7 +103,7 @@ func TestScanCPUAndRSSInOnePass(t *testing.T) {
 	if res.CPU.CorePercent == nil || *res.CPU.CorePercent != 100 {
 		t.Errorf("core percent = %v, want 100", res.CPU.CorePercent)
 	}
-	if res.CPU.WindowMS != 1000 || res.CPU.Scope != ScopeAllProcesses || res.CPU.Source != SourceProcStat {
+	if res.CPU.WindowMS != 1000 || res.CPU.Scope != ScopeVisibleProcesses || res.CPU.Source != SourceProcStat {
 		t.Errorf("CPU metadata = %+v", res.CPU)
 	}
 	if res.RSS.PID != 10 || res.RSS.Value != 20*4096 || res.RSS.Unit != UnitBytes {
@@ -184,6 +184,31 @@ func TestFilterZombieKernelThreadAndLowPIDs(t *testing.T) {
 	}
 	if res.CPU == nil || res.CPU.PID != 12 {
 		t.Fatalf("CPU = %+v, want pid 12", res.CPU)
+	}
+}
+
+func TestProcessChurnDoesNotSuppressTopProcess(t *testing.T) {
+	root := t.TempDir()
+	putProc(t, root, 60, statLine(60, "alive", "S", 0, 0, 0, 100, 5))
+	putProc(t, root, 61, statLine(61, "exiting", "S", 0, 0, 0, 100, 5))
+	s := testScanner(root, Options{})
+	t0 := time.Unix(1000, 0)
+	s.Sample(t0, 1000)
+
+	// The second process exits between readdir and stat read.
+	if err := os.Remove(filepath.Join(root, "proc", "61", "stat")); err != nil {
+		t.Fatal(err)
+	}
+	putProc(t, root, 60, statLine(60, "alive", "S", 0, 50, 0, 100, 5))
+	res := s.Sample(t0.Add(time.Second), 1000)
+	if !res.Complete {
+		t.Fatalf("normal churn made scan incomplete: %+v", res)
+	}
+	if res.CPU == nil || res.CPU.PID != 60 || res.CPU.Scope != ScopeVisibleProcesses {
+		t.Fatalf("top process suppressed by churn: %+v", res.CPU)
+	}
+	if res.RSS == nil || res.RSS.PID != 60 {
+		t.Fatalf("RSS suppressed by churn: %+v", res.RSS)
 	}
 }
 
