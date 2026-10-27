@@ -4,9 +4,9 @@ Only intentionally deferred work belongs here.
 
 ## Optional one-time power calibration
 
-The UTH Power application itself must always run unprivileged. Add an optional,
-explicit calibration workflow that users may run separately with elevated
-access:
+The Omarchy Power Flow application itself must always run unprivileged. Add an
+optional, explicit calibration workflow that users may run separately with
+elevated access:
 
 - Capture CPU package RAPL readings at idle and several utilization levels.
 - Derive machine-specific CPU idle, load, and peak coefficients.

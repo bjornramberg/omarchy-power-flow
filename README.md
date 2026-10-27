@@ -1,8 +1,9 @@
 # Omarchy Power Flow
 
-Omarchy Power Flow (UTH Power) is an Omarchy shell plugin that turns live component power readings
-into an animated power-flow panel. A source node feeds CPU, GPU, RAM, and disk
-nodes through Bezier cords; faster flow represents a larger power draw.
+Omarchy Power Flow is an Omarchy shell plugin that turns live component power
+readings into an animated power-flow panel. A source node feeds CPU, GPU, RAM,
+and disk nodes through Bezier cords; faster flow represents a larger power
+draw.
 
 The plugin adds a compact bolt icon to the right side of the Omarchy bar. Activate it to open a bar-anchored power-flow dashboard; dismiss it with Escape, an outside click, or the same bar location. Directional energy packets move from the source toward each component, while stroke width, brightness, and packet energy make relative consumption visible at a glance.
 
@@ -24,40 +25,62 @@ From the published repository:
 omarchy plugin add https://github.com/bjornramberg/omarchy-power-flow.git --enable
 ```
 
-The repository is named `omarchy-power-flow`; the installed plugin ID remains
-`uth.power` so existing installations and configurations continue to work.
+The repository is named `omarchy-power-flow` and the plugin ID is
+`io.github.bjornramberg.omarchy-power-flow`.
 
 Then open or toggle the panel:
 
 ```sh
-omarchy-shell shell summon uth.power '{}'
-omarchy-shell shell toggle uth.power '{}'
+omarchy-shell shell summon io.github.bjornramberg.omarchy-power-flow '{}'
+omarchy-shell shell toggle io.github.bjornramberg.omarchy-power-flow '{}'
 ```
 
 Hide it again with:
 
 ```sh
-omarchy-shell shell hide uth.power
+omarchy-shell shell hide io.github.bjornramberg.omarchy-power-flow
 ```
 
 A Hyprland binding can summon it directly:
 
 ```ini
-bind = SUPER, P, exec, omarchy-shell shell toggle uth.power '{}'
+bind = SUPER, P, exec, omarchy-shell shell toggle io.github.bjornramberg.omarchy-power-flow '{}'
 ```
+
+### Upgrading from UTH Power
+
+Installations created under the old `uth.power` identity need a one-time
+migration. From an up-to-date checkout of this repository, run:
+
+```sh
+./scripts/migrate-from-uth-power.sh
+```
+
+The script moves `~/.config/omarchy/plugins/uth.power` to
+`~/.config/omarchy/plugins/io.github.bjornramberg.omarchy-power-flow`, updates
+the plugin id in `~/.config/omarchy/shell.json`, and migrates the legacy
+`uth-power` menu row to `omarchy-power-flow`. It backs up the files it rewrites,
+requests a plugin rescan and menu refresh, never uses sudo, and is safe to
+rerun. It refuses to replace an existing new plugin directory unless that
+directory's manifest declares the new ID.
+
+If the installed plugin checkout still contains the old release, update it
+before migrating so the moved directory already carries the new identity.
 
 ### Super-key menu entry
 
 Omarchy plugin installation does not copy menu extensions automatically. Add
-the optional UTH Power row to the Super-key menu with the idempotent helper:
+the optional Omarchy Power Flow row to the Super-key menu with the idempotent
+helper:
 
 ```sh
 ./scripts/install-menu-entry.sh
 ```
 
 The helper updates only `~/.config/omarchy/extensions/omarchy-menu.jsonc`,
-backs up the existing file, and refreshes the menu. The mergeable source
-fragment is in `extensions/omarchy-menu.jsonc`.
+backs up the existing file, migrates an older `uth-power` row in place, and
+refreshes the menu. The mergeable source fragment is in
+`extensions/omarchy-menu.jsonc`.
 
 ## Local development
 
@@ -71,28 +94,32 @@ For a local checkout, place the repository at the plugin ID path and rescan the
 shell:
 
 ```sh
-git clone <url> ~/.config/omarchy/plugins/uth.power
+git clone <url> ~/.config/omarchy/plugins/io.github.bjornramberg.omarchy-power-flow
 omarchy-shell shell rescanPlugins
-omarchy plugin enable uth.power --section right
+omarchy plugin enable io.github.bjornramberg.omarchy-power-flow --section right
 ```
 
 The bolt icon is placed in the bar's right section. Reposition it with, for
 example:
 
 ```sh
-omarchy bar move uth.power --section right --after omarchy.power
+omarchy bar move io.github.bjornramberg.omarchy-power-flow --section right --after omarchy.power
 ```
 
 If the plugin was previously enabled only through the `plugins[]` list, run
-`omarchy plugin disable uth.power` before enabling it as a bar widget.
+`omarchy plugin disable io.github.bjornramberg.omarchy-power-flow` before
+enabling it as a bar widget.
 
-Saving a file below `~/.config/omarchy/plugins/uth.power/` reloads the plugin.
+Saving a file below
+`~/.config/omarchy/plugins/io.github.bjornramberg.omarchy-power-flow/` reloads
+the plugin.
 The currently open panel closes during reload and must be summoned again.
 
 ## Build
 
-The repository ships static Go binaries for amd64 and arm64 Linux. `bin/uth-power`
-is a small architecture-aware launcher used by the QML panel.
+The repository ships static Go binaries for amd64 and arm64 Linux.
+`bin/omarchy-power-flow` is a small architecture-aware launcher used by the QML
+panel.
 
 ```sh
 ./scripts/build-binaries.sh
@@ -111,13 +138,13 @@ go vet ./...
 
 ```text
 manifest.json              Omarchy bar-widget plugin manifest
-qml/BarTrigger.qml         Bar icon, lifecycle, process bridge, anchored popup
-qml/UthPowerWidget.qml     Dashboard, source hub, consumer tiles, cord layer
-qml/AnimatedCord.qml       Directional base path, dash flow, energy packets
+qml/PowerFlow.qml          Bar icon, lifecycle, process bridge, anchored popup
+qml/PowerFlowWidget.qml    Dashboard, source hub, consumer tiles, cord layer
+qml/AnimatedCord.qml       Continuous watt-share gradient and energy packets
 backend/                   Go sensor collector and tests
 bin/                       Static amd64/arm64 collector binaries and launcher
 extensions/                Optional Super-key menu row
-scripts/                   Binary build and menu-entry installer
+scripts/                   Build, menu installer, and identity migration
 TODO.md                    Optional one-time calibration plan
 ```
 
@@ -157,13 +184,13 @@ provide without privileges:
 
 These are activity indicators, not power attribution. Linux does not expose
 per-process DRAM or GPU watts, and process I/O permissions are incomplete, so
-The plugin intentionally does not make disk/GPU process-power claims.
+the plugin intentionally does not make disk/GPU process-power claims.
 
 The collector performs one bounded `/proc/<pid>/stat` scan per second. It
 measures about 5 ms per scan on a roughly 460-process host. Disable it with:
 
 ```sh
-uth-power --processes off
+omarchy-power-flow --processes off
 ```
 
 ### Reliability and diagnostics
@@ -181,8 +208,8 @@ The collector and panel fail independently and visibly:
 Useful checks:
 
 ```sh
-omarchy plugin validate ~/.config/omarchy/plugins/uth.power
-~/.config/omarchy/plugins/uth.power/bin/uth-power --once
+omarchy plugin validate ~/.config/omarchy/plugins/io.github.bjornramberg.omarchy-power-flow
+~/.config/omarchy/plugins/io.github.bjornramberg.omarchy-power-flow/bin/omarchy-power-flow --once
 journalctl --user -t omarchy-shell -f
 ```
 
