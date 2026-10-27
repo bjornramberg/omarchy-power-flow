@@ -2,10 +2,10 @@
 
 ![Omarchy Power Flow](preview.png)
 
-An Omarchy shell plugin that turns live component power readings into an
-animated power-flow panel. A source node feeds CPU, GPU, RAM, and disk nodes
-through Bezier cords; faster flow and wider strokes represent a larger power
-draw.
+A fun side project that is an Omarchy shell plugin that turns live component 
+power readings into an animated power-flow panel. A source node feeds CPU, 
+GPU, RAM, and disk nodes through Bezier cords; faster flow and wider 
+strokes represent a larger power draw.
 
 ## Requirements
 
