@@ -66,10 +66,14 @@ Item {
     }
 
     function sourceName() {
+        var mode = sourceData && sourceData.power_mode ? String(sourceData.power_mode).toLowerCase() : "";
+        if (mode === "unknown")
+            return "System";
+
         if (sourceData && sourceData.name)
             return String(sourceData.name);
 
-        return "Unknown";
+        return "System";
     }
 
     function sourceGlyph() {
