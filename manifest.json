@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.bjornramberg.omarchy-power-flow",
   "name": "Omarchy Power Flow",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Björn Ramberg",
   "license": "MIT",
   "description": "Animated live component power-flow visualization for the Omarchy bar.",
