@@ -30,6 +30,40 @@ Item {
     readonly property int cardPadding: Style.space(12)
     readonly property int portSize: Style.space(10)
     readonly property int headerBodyGap: Style.space(14)
+    readonly property string dominantId: {
+        var bestId = "";
+        var bestW = -1;
+        for (var i = 0; i < root.canonicalIds.length; i++) {
+            var id = root.canonicalIds[i];
+            var c = root.componentById(id);
+            if (!c)
+                continue;
+            var w = c.draw_w !== undefined && c.draw_w !== null && isFinite(Number(c.draw_w)) ? Number(c.draw_w) : 0;
+            if (w > 0 && w > bestW) {
+                bestW = w;
+                bestId = id;
+            }
+        }
+        if (bestId !== "")
+            return bestId;
+
+        for (var i = 0; i < root.canonicalIds.length; i++) {
+            id = root.canonicalIds[i];
+            c = root.componentById(id);
+            if (!c)
+                continue;
+            var pct = 0;
+            if (id === "cpu" || id === "ram")
+                pct = typeof c.utilization_percent === "number" ? c.utilization_percent : 0;
+            else
+                pct = typeof c.activity_percent === "number" ? c.activity_percent : 0;
+            if (pct > 0 && pct > bestW) {
+                bestW = pct;
+                bestId = id;
+            }
+        }
+        return bestId;
+    }
     property var nodeMap: ({
     })
 
@@ -203,11 +237,11 @@ Item {
         id: header
 
         spacing: Style.space(4)
-        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.left: body.left
+        width: body.width
 
         Row {
             spacing: Style.space(10)
-            anchors.horizontalCenter: parent.horizontalCenter
 
             Text {
                 text: "\uf0e7"
@@ -426,6 +460,7 @@ Item {
         readonly property string modelName: c && c.model && typeof c.model === "object" && c.model.id !== undefined ? String(c.model.id) : ""
         readonly property var topProcess: c && c.top_process ? c.top_process : null
         readonly property bool hasWatts: drawW !== null && drawW !== undefined && isFinite(Number(drawW))
+        readonly property bool isDominant: root.dominantId === tile.nodeId && root.dataLoaded && !root.stale
         readonly property real displayFraction: {
             if (nodeId === "cpu" || nodeId === "ram")
                 return Math.max(0, Math.min(1, utilizationPercent / 100));
@@ -607,6 +642,49 @@ Item {
             opacity: tile.available ? 0.9 : 0.25
             border.color: root.foreground
             border.width: tile.available ? Math.max(1, Style.spaceReal(1)) : 0
+        }
+
+        // Dominant-tile pulse border.
+        Rectangle {
+            id: pulseBorder
+
+            anchors.fill: parent
+            anchors.margins: -Style.spaceReal(1.5)
+            radius: Style.cornerRadius + Style.spaceReal(1.5)
+            color: "transparent"
+            visible: tile.isDominant
+
+            property real pulseProgress: 0
+            readonly property real pulseAlpha: root.reduceMotion ? 0.85 : 0.4 + 0.6 * pulseProgress
+            readonly property real pulseWidth: root.reduceMotion ? Math.max(1, Style.spaceReal(1.5)) : Math.max(1, Style.spaceReal(1) + Style.spaceReal(1) * pulseProgress)
+
+            border.color: Util.alpha(root.accent, pulseAlpha)
+            border.width: pulseWidth
+
+            SequentialAnimation {
+                loops: Animation.Infinite
+                running: tile.isDominant && !root.reduceMotion
+
+                NumberAnimation {
+                    target: pulseBorder
+                    property: "pulseProgress"
+                    from: 0
+                    to: 1
+                    duration: 1100
+                    easing.type: Easing.InOutSine
+                }
+
+                NumberAnimation {
+                    target: pulseBorder
+                    property: "pulseProgress"
+                    from: 1
+                    to: 0
+                    duration: 1100
+                    easing.type: Easing.InOutSine
+                }
+
+            }
+
         }
 
         // Provenance tooltip.
