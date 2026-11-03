@@ -38,6 +38,14 @@ Saving a file below
 the plugin. The currently open panel closes during reload and must be summoned
 again.
 
+Hot reload can leave a stale plugin instance serving the panel, so an edited
+QML file may keep rendering the previous version. Restart the shell to force a
+fresh instance when a change does not appear:
+
+```sh
+omarchy-restart-shell
+```
+
 ## Build and verify binaries
 
 The repository ships static Go binaries for amd64 and arm64 Linux.
