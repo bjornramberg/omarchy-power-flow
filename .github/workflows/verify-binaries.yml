@@ -6,6 +6,10 @@ name: Verify collector binaries
 # carry a GitHub build-provenance attestation, so anyone can check that the
 # shipped binaries are the output of this source tree without trusting this
 # repository's own hash file.
+#
+# The pinned upstream toolchain is selected with GOTOOLCHAIN rather than
+# actions/setup-go, so the exact release recorded in backend/go.mod is used
+# even when the runner ships a different Go build.
 
 on:
   push:
@@ -39,16 +43,20 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "GOTOOLCHAIN=$version" >> "$GITHUB_ENV"
 
-      - name: Set up Go ${{ steps.toolchain.outputs.version }}
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ steps.toolchain.outputs.version }}
-          cache-dependency-path: backend/go.sum
+      - name: Confirm the pinned toolchain is in use
+        run: |
+          expected="${{ steps.toolchain.outputs.version }}"
+          actual="$(go version | awk '{print $3}')"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "expected toolchain $expected, got $actual" >&2
+            exit 1
+          fi
+          go version
 
       - name: Report tracked binary identities
         run: |
-          go version
           for arch in amd64 arm64; do
             path="bin/omarchy-power-flow-linux-$arch"
             printf '%s\n' "$path"
@@ -65,7 +73,7 @@ jobs:
       - name: Upload rebuilt binaries
         uses: actions/upload-artifact@v4
         with:
-          name: collector-binaries
+          name: collector-binaries-amd64
           path: ${{ runner.temp }}/rebuilt/omarchy-power-flow-linux-amd64
           if-no-files-found: error
           retention-days: 90
