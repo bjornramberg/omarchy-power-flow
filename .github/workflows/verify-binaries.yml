@@ -1,0 +1,89 @@
+name: Verify collector binaries
+
+# Rebuilds the shipped collector binaries from backend/ with the Go toolchain
+# pinned in backend/go.mod and compares them byte-for-byte with the tracked
+# files in bin/.  The rebuilt files are published as workflow artifacts and
+# carry a GitHub build-provenance attestation, so anyone can check that the
+# shipped binaries are the output of this source tree without trusting this
+# repository's own hash file.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Rebuild and compare
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Read the pinned Go toolchain
+        id: toolchain
+        working-directory: backend
+        run: |
+          version="$(awk '$1 == "toolchain" { print $2 }' go.mod)"
+          if [[ -z "$version" ]]; then
+            echo "backend/go.mod does not pin a toolchain" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go ${{ steps.toolchain.outputs.version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.toolchain.outputs.version }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Report tracked binary identities
+        run: |
+          go version
+          for arch in amd64 arm64; do
+            path="bin/omarchy-power-flow-linux-$arch"
+            printf '%s\n' "$path"
+            printf '  git blob: %s\n' "$(git rev-parse "HEAD:$path")"
+            printf '  sha256:   %s\n' "$(sha256sum "$path" | cut -d' ' -f1)"
+          done
+
+      - name: Verify tracked binaries against clean builds
+        run: ./scripts/verify-binaries.sh --output-dir "$RUNNER_TEMP/rebuilt"
+
+      - name: Verify published hashes
+        run: sha256sum -c SHA256SUMS
+
+      - name: Upload rebuilt binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: collector-binaries
+          path: ${{ runner.temp }}/rebuilt/omarchy-power-flow-linux-amd64
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload rebuilt binaries (arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: collector-binaries-arm64
+          path: ${{ runner.temp }}/rebuilt/omarchy-power-flow-linux-arm64
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attest build provenance (amd64)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ runner.temp }}/rebuilt/omarchy-power-flow-linux-amd64
+
+      - name: Attest build provenance (arm64)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ runner.temp }}/rebuilt/omarchy-power-flow-linux-arm64

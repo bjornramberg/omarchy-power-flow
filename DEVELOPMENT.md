@@ -64,6 +64,30 @@ architectures with the pinned Go toolchain and compares them byte-for-byte with
 the tracked binaries. A mismatch means the tracked binary must be reviewed and
 rebuilt rather than installed blindly.
 
+Both scripts pin the toolchain to the version recorded in `backend/go.mod` and
+export `GOTOOLCHAIN`, so the build uses that exact upstream Go release instead
+of whatever Go happens to be installed on the host. The pinned toolchain is
+downloaded automatically when it is not present.
+
+### Continuous integration and provenance
+
+`.github/workflows/verify-binaries.yml` runs on every push to `main` and on
+every pull request. It installs the pinned upstream toolchain, rebuilds both
+architectures, compares them byte-for-byte with the tracked files, checks
+`SHA256SUMS`, publishes the rebuilt binaries as workflow artifacts, and attaches
+a GitHub build-provenance attestation to each artifact.
+
+The attestation is the independent check for the shipped binaries: it binds the
+rebuilt files to the exact commit that produced them, so the tracked blobs in
+`bin/` can be confirmed to be the output of this source tree without trusting
+the repository's own hash file.
+
+```sh
+gh run list --workflow=verify-binaries.yml
+gh attestation verify bin/omarchy-power-flow-linux-amd64 --repo bjornramberg/omarchy-power-flow
+```
+
+
 ## Backend checks
 
 Run these from the backend module:

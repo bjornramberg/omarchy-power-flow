@@ -27,7 +27,9 @@ treated as measurements of a protected rail.
 
 The repository ships static amd64 and arm64 Go collector binaries. They are
 built from the `backend/` source in this repository with the standard library
-only, `CGO_ENABLED=0`, `-trimpath`, and `-buildvcs=false`.
+only, `CGO_ENABLED=0`, `-trimpath`, and `-buildvcs=false`, using the upstream Go
+release pinned in `backend/go.mod`. The build scripts export `GOTOOLCHAIN`, so
+a locally patched Go cannot silently change the output.
 
 Verify the tracked binaries against clean builds with the pinned Go toolchain:
 
@@ -37,6 +39,17 @@ Verify the tracked binaries against clean builds with the pinned Go toolchain:
 
 Published hashes are recorded in `SHA256SUMS`. A mismatch means the tracked
 binary must be reviewed and rebuilt rather than installed blindly.
+
+Every push to `main` rebuilds both architectures in continuous integration,
+compares them byte-for-byte with the tracked files, publishes the rebuilt
+binaries as artifacts, and attaches a GitHub build-provenance attestation to
+each one. The attestation ties the shipped blobs to the exact source commit
+that produced them, so the binaries can be checked against this source tree
+without relying on the hash file in the same repository:
+
+```sh
+gh attestation verify bin/omarchy-power-flow-linux-amd64 --repo bjornramberg/omarchy-power-flow
+```
 
 ## Reporting a vulnerability
 
