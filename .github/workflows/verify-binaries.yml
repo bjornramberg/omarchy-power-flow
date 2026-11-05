@@ -10,12 +10,32 @@ name: Verify collector binaries
 # The pinned upstream toolchain is selected with GOTOOLCHAIN rather than
 # actions/setup-go, so the exact release recorded in backend/go.mod is used
 # even when the runner ships a different Go build.
+#
+# The workflow can also be run against an older commit.  That matters for
+# published snapshots: the v1.1.0 snapshot (a215739) was built with
+# GOEXPERIMENT=nodwarf5, so it needs "-f source_ref=a215739... -f
+# goexperiment=nodwarf5" to be reproduced.  The rebuild itself is inlined
+# below so that it works on trees whose scripts predate the --output-dir
+# option.
 
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: >-
+          Commit to rebuild the collector binaries from.  Defaults to the
+          dispatched ref.
+        required: false
+        default: ''
+      goexperiment:
+        description: >-
+          GOEXPERIMENT value for the rebuild.  Leave empty for the default
+          experiment set.  The v1.1.0 snapshot (a215739) needs nodwarf5.
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -32,6 +52,10 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Read the pinned Go toolchain
         id: toolchain
@@ -44,6 +68,17 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "GOTOOLCHAIN=$version" >> "$GITHUB_ENV"
+
+      - name: Set the experiment set
+        if: inputs.goexperiment != ''
+        run: echo "GOEXPERIMENT=${{ inputs.goexperiment }}" >> "$GITHUB_ENV"
+
+      - name: Report the source under review
+        run: |
+          set -euo pipefail
+          echo "commit=$(git rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "goexperiment=${GOEXPERIMENT:-<default>}" | tee -a "$GITHUB_STEP_SUMMARY"
+          git log -1 --format='%H %s' | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Confirm the pinned toolchain is in use
         run: |
@@ -64,11 +99,40 @@ jobs:
             printf '  sha256:   %s\n' "$(sha256sum "$path" | cut -d' ' -f1)"
           done
 
+      - name: Rebuild the collector binaries
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/rebuilt"
+          for arch in amd64 arm64; do
+            (
+              cd backend
+              CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
+                -buildvcs=false \
+                -trimpath \
+                -ldflags='-s -w' \
+                -o "$RUNNER_TEMP/rebuilt/omarchy-power-flow-linux-$arch" \
+                ./cmd/omarchy-power-flow
+            )
+          done
+
+      - name: Compare the rebuild with the tracked binaries
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            cmp "$RUNNER_TEMP/rebuilt/omarchy-power-flow-linux-$arch" \
+                "bin/omarchy-power-flow-linux-$arch"
+            printf 'bin/omarchy-power-flow-linux-%s matches the rebuild\n' "$arch"
+          done
+
       - name: Verify tracked binaries against clean builds
-        run: ./scripts/verify-binaries.sh --output-dir "$RUNNER_TEMP/rebuilt"
+        run: ./scripts/verify-binaries.sh
 
       - name: Verify published hashes
         run: sha256sum -c SHA256SUMS
+
+      - name: Run the backend tests
+        working-directory: backend
+        run: go test -count=1 ./...
 
       - name: Upload rebuilt binaries
         uses: actions/upload-artifact@v4

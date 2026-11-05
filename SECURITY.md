@@ -51,6 +51,10 @@ without relying on the hash file in the same repository:
 gh attestation verify bin/omarchy-power-flow-linux-amd64 --repo bjornramberg/omarchy-power-flow
 ```
 
+[PROVENANCE.md](PROVENANCE.md) records the full build contract, a standalone
+rebuild recipe with the expected hashes, the provenance of the v1.1.0 snapshot,
+and how to rebuild an older commit in CI.
+
 ## Reporting a vulnerability
 
 Please report suspected vulnerabilities privately through GitHub Security
