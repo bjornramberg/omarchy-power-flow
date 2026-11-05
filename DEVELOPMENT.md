@@ -64,6 +64,25 @@ architectures with the pinned Go toolchain and compares them byte-for-byte with
 the tracked binaries. A mismatch means the tracked binary must be reviewed and
 rebuilt rather than installed blindly.
 
+Both scripts source `scripts/build-env.sh`, which pins the build environment:
+the Go release from the `toolchain` directive in `backend/go.mod`
+(`GOTOOLCHAIN`), `GOEXPERIMENT=nodwarf5`, `CGO_ENABLED=0` and `GOWORK=off`.
+Any change to that file changes the produced bytes and therefore
+`SHA256SUMS`.
+
+To build without touching the tracked files, for example to compare a fresh
+build against them:
+
+```sh
+./scripts/build-binaries.sh --out-dir /tmp/rebuilt
+cmp /tmp/rebuilt/omarchy-power-flow-linux-amd64 bin/omarchy-power-flow-linux-amd64
+```
+
+CI runs the same check on every push and pull request, and publishes a signed
+build provenance attestation for the rebuilt binaries. See
+[PROVENANCE.md](PROVENANCE.md) for the build contract, the attestation check
+and the history of the recipe.
+
 ## Backend checks
 
 Run these from the backend module:

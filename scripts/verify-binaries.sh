@@ -8,11 +8,15 @@
 #
 # Usage: scripts/verify-binaries.sh
 #
-# Requires the same Go toolchain that produced the tracked binaries.  Run this
-# after `scripts/build-binaries.sh` and commit the refreshed binaries.
+# The rebuild uses the pinned environment in scripts/build-env.sh, so it needs
+# the Go release recorded in backend/go.mod.  A mismatch means the tracked
+# binary must be reviewed and rebuilt rather than installed blindly.
 set -euo pipefail
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=scripts/build-env.sh
+source "$repo_root/scripts/build-env.sh"
+
 backend_dir="$repo_root/backend"
 bin_dir="$repo_root/bin"
 
@@ -23,7 +27,7 @@ for tool in go cmp sha256sum; do
   fi
 done
 
-tmp_parent="${TMPDIR:-/tmp/opencode}"
+tmp_parent="${TMPDIR:-/tmp}"
 mkdir -p -- "$tmp_parent"
 tmpdir=$(mktemp -d "$tmp_parent/omarchy-power-flow-verify.XXXXXX") ||
   {
@@ -38,6 +42,8 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 printf 'verify-binaries: using %s\n' "$(go version)"
+printf 'verify-binaries: using GOEXPERIMENT=%s GOTOOLCHAIN=%s CGO_ENABLED=%s\n' \
+  "$GOEXPERIMENT" "$GOTOOLCHAIN" "$CGO_ENABLED"
 
 status=0
 for arch in amd64 arm64; do
@@ -53,7 +59,7 @@ for arch in amd64 arm64; do
   printf 'verify-binaries: rebuilding linux/%s\n' "$arch"
   if ! (
     cd "$backend_dir"
-    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
+    GOOS=linux GOARCH="$arch" go build \
       -buildvcs=false \
       -trimpath \
       -ldflags='-s -w' \
@@ -67,6 +73,8 @@ for arch in amd64 arm64; do
 
   if cmp -s -- "$tracked" "$rebuilt"; then
     printf 'verify-binaries: OK %s matches a clean build\n' "${tracked#"$repo_root"/}"
+    printf 'verify-binaries:    sha256 %s\n' "$(sha256sum -- "$tracked" | cut -d' ' -f1)"
+    printf 'verify-binaries:    build %s\n' "$(go version -m "$tracked" | sed -n '1p')"
   else
     printf 'verify-binaries: MISMATCH %s does not match a clean build\n' "${tracked#"$repo_root"/}" >&2
     printf '  tracked sha256: %s\n' "$(sha256sum -- "$tracked" | cut -d' ' -f1)" >&2
@@ -80,6 +88,14 @@ if [[ "$status" -ne 0 ]]; then
     'verify-binaries: tracked binaries are not reproducible with this toolchain.' \
     'Run scripts/build-binaries.sh using the same Go version, then commit the result.' >&2
   exit 1
+fi
+
+if [[ -f "$repo_root/SHA256SUMS" ]]; then
+  printf 'verify-binaries: checking SHA256SUMS\n'
+  if ! (cd "$repo_root" && sha256sum -c SHA256SUMS); then
+    printf 'verify-binaries: SHA256SUMS does not match the tracked binaries\n' >&2
+    exit 1
+  fi
 fi
 
 printf 'verify-binaries: all tracked binaries match clean builds\n'
