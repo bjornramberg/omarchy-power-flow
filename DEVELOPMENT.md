@@ -87,6 +87,18 @@ gh run list --workflow=verify-binaries.yml
 gh attestation verify bin/omarchy-power-flow-linux-amd64 --repo bjornramberg/omarchy-power-flow
 ```
 
+The workflow can also rebuild an older commit, which is what published
+snapshots need. The v1.1.0 snapshot (`a215739`) was built with the DWARF v5
+experiment disabled:
+
+```sh
+gh workflow run verify-binaries.yml --ref main \
+  -f source_ref=a215739296226869f63746aac641935031a87960 \
+  -f goexperiment=nodwarf5
+```
+
+[PROVENANCE.md](PROVENANCE.md) records the build contract, the standalone
+rebuild recipes with their expected hashes, and the history of the recipe.
 
 ## Backend checks
 
