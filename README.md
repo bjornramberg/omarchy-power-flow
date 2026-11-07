@@ -42,6 +42,13 @@ Remove the plugin by its permanent ID:
 omarchy plugin remove io.github.bjornramberg.omarchy-power-flow
 ```
 
+## Verifying the bundled binaries
+
+The shipped collectors are reproducible from the source in this repository.
+[PROVENANCE.md](PROVENANCE.md) records the build contract, a standalone rebuild
+recipe with the expected hashes, and how to check the GitHub build-provenance
+attestations.
+
 ## Architecture
 
 ```text
@@ -52,7 +59,8 @@ qml/AnimatedCord.qml       Continuous watt-share gradient and energy packets
 backend/                   Go sensor collector and tests
 bin/                       Static amd64/arm64 collector binaries and launcher
 scripts/                   Build and binary-verification helpers
-SECURITY.md                Security model, build provenance, and reporting
+SECURITY.md                Security model, permission scope, and reporting
+PROVENANCE.md              Build contract, rebuild recipes, and attestations
 DEVELOPMENT.md             Local development, build, sensor, and JSON details
 SHA256SUMS                 Published hashes for bundled collector binaries
 ```
