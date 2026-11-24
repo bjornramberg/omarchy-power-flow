@@ -563,6 +563,10 @@ func setupProcessRoot(t *testing.T) string {
 
 func TestCollectorTopProcesses(t *testing.T) {
 	root := setupProcessRoot(t)
+	// Extra processes so both lists can hold two entries.  They must exist
+	// before priming to accumulate CPU deltas.
+	addProcStat(t, root, 102, "worker", 0, 0, 100, 40)
+	addProcStat(t, root, 103, "helper", 0, 0, 100, 40)
 	c := New(Options{Root: root, NvidiaMode: NvidiaOff})
 	t0 := time.Unix(1000, 0)
 	c.SampleAt(t0)
@@ -570,6 +574,8 @@ func TestCollectorTopProcesses(t *testing.T) {
 	writeProc(t, root, "stat", "cpu  1000 0 0 1000 0 0 0 0 0 0\n")
 	addProcStat(t, root, 100, "busy", 60, 40, 100, 20)
 	addProcStat(t, root, 101, "sleep", 0, 0, 100, 100)
+	addProcStat(t, root, 102, "worker", 20, 10, 100, 40)
+	addProcStat(t, root, 103, "helper", 10, 10, 100, 40)
 	snap := c.SampleAt(t0.Add(time.Second))
 
 	cpu := findComponent(t, snap, report.IDCPU)
@@ -590,6 +596,20 @@ func TestCollectorTopProcesses(t *testing.T) {
 		t.Errorf("CPU top metadata = %+v", topCPU)
 	}
 
+	if len(cpu.TopProcesses) != 2 {
+		t.Fatalf("CPU top_processes = %d entries, want 2: %+v", len(cpu.TopProcesses), cpu.TopProcesses)
+	}
+	if cpu.TopProcesses[0].PID != 100 || cpu.TopProcesses[1].PID != 102 {
+		t.Errorf("CPU top_processes order = %d,%d, want 100,102",
+			cpu.TopProcesses[0].PID, cpu.TopProcesses[1].PID)
+	}
+	if cpu.TopProcesses[1].Value != 3 || cpu.TopProcesses[1].Unit != "percent_of_machine" {
+		t.Errorf("CPU second process = %+v, want 3 percent_of_machine", cpu.TopProcesses[1])
+	}
+	if cpu.TopProcesses[1].CorePercent == nil || *cpu.TopProcesses[1].CorePercent != 30 {
+		t.Errorf("CPU second core percent = %v, want 30", cpu.TopProcesses[1].CorePercent)
+	}
+
 	ram := findComponent(t, snap, report.IDRAM)
 	if ram.TopProcess == nil {
 		t.Fatal("RAM top_process missing")
@@ -603,6 +623,23 @@ func TestCollectorTopProcesses(t *testing.T) {
 	}
 	if topRAM.CorePercent != nil {
 		t.Errorf("RAM top core_percent = %v, want nil", *topRAM.CorePercent)
+	}
+
+	if len(ram.TopProcesses) != 2 {
+		t.Fatalf("RAM top_processes = %d entries, want 2: %+v", len(ram.TopProcesses), ram.TopProcesses)
+	}
+	// 100 pages, then the 40-page PID tie broken by PID ascending.
+	if ram.TopProcesses[0].PID != 101 || ram.TopProcesses[1].PID != 102 {
+		t.Errorf("RAM top_processes order = %d,%d, want 101,102",
+			ram.TopProcesses[0].PID, ram.TopProcesses[1].PID)
+	}
+	if ram.TopProcesses[1].Value != 40*4096 || ram.TopProcesses[1].Unit != "bytes" {
+		t.Errorf("RAM second process = %+v, want 40 pages of bytes", ram.TopProcesses[1])
+	}
+	for _, tp := range ram.TopProcesses {
+		if tp.CorePercent != nil {
+			t.Errorf("RAM core_percent = %v, want nil", *tp.CorePercent)
+		}
 	}
 }
 
@@ -619,6 +656,9 @@ func TestCollectorProcessesOff(t *testing.T) {
 		comp := findComponent(t, snap, id)
 		if comp.TopProcess != nil {
 			t.Errorf("%s has top_process with --processes off: %+v", id, comp.TopProcess)
+		}
+		if comp.TopProcesses != nil {
+			t.Errorf("%s has top_processes with --processes off: %+v", id, comp.TopProcesses)
 		}
 	}
 }

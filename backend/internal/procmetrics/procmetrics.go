@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,10 +24,15 @@ import (
 const (
 	// DefaultMaxPIDs bounds a single scan.
 	DefaultMaxPIDs = 1200
-	// DefaultBudget bounds a single scan's wall time.
-	DefaultBudget = 10 * time.Millisecond
+	// DefaultBudget bounds a single scan's wall time.  Mean host scans run
+	// ~7 ms, so 25 ms keeps incomplete-scan gaps rare without affecting the
+	// 1 s sample cadence.
+	DefaultBudget = 25 * time.Millisecond
 	// DefaultClockTicks is Linux USER_HZ, used for core_percent.
 	DefaultClockTicks = 100.0
+
+	// maxTop is how many ranked metrics each list keeps.
+	maxTop = 2
 
 	pfKthread = 0x00200000
 )
@@ -66,10 +72,13 @@ type Metric struct {
 	OK          bool
 }
 
-// Result is one bounded scan.
+// Result is one bounded scan.  CPUTop and RSSTop hold up to two ranked
+// metrics each; CPU and RSS repeat their first element for compatibility.
 type Result struct {
 	CPU      *Metric
 	RSS      *Metric
+	CPUTop   []*Metric
+	RSSTop   []*Metric
 	Scanned  int
 	Complete bool
 	Primed   bool
@@ -79,6 +88,14 @@ type Result struct {
 type procState struct {
 	startTime uint64
 	ticks     uint64
+}
+
+// candidate is one process seen during a scan, before ranking.
+type candidate struct {
+	pid   int
+	name  string
+	ticks uint64
+	rss   int64
 }
 
 // Scanner tracks process ticks between samples.
@@ -149,12 +166,7 @@ func (s *Scanner) Sample(now time.Time, machineDeltaTicks uint64) Result {
 	pidCount := 0
 	scanned := 0
 
-	var (
-		cpuBest      *Metric
-		cpuBestTicks uint64
-		rssBest      *Metric
-		rssBestBytes int64
-	)
+	candidates := make([]candidate, 0, len(entries))
 
 	for _, entry := range entries {
 		if time.Since(start) > s.budget {
@@ -182,30 +194,13 @@ func (s *Scanner) Sample(now time.Time, machineDeltaTicks uint64) Result {
 		scanned++
 		next[pid] = state
 
-		if rss > 0 && (rssBest == nil || rss > rssBestBytes ||
-			(rss == rssBestBytes && pid < rssBest.PID)) {
-			rssBestBytes = rss
-			rssBest = &Metric{
-				PID: pid, Name: name, Metric: MetricRSS,
-				Value: float64(rss), Unit: UnitBytes,
-				WindowMS: 0, Scope: ScopeVisibleProcesses,
-				Source: SourceProcStat, OK: true,
-			}
-		}
-
+		cand := candidate{pid: pid, name: name, rss: rss}
 		if old, ok := s.prev[pid]; ok && old.startTime == state.startTime &&
 			state.ticks >= old.ticks {
-			delta := state.ticks - old.ticks
-			if delta > 0 && (cpuBest == nil || delta > cpuBestTicks ||
-				(delta == cpuBestTicks && pid < cpuBest.PID)) {
-				cpuBestTicks = delta
-				cpuBest = &Metric{
-					PID: pid, Name: name, Metric: MetricCPU,
-					Unit:     UnitPercentOfMachine,
-					WindowMS: int(math.Round(elapsed * 1000)),
-					Scope:    ScopeVisibleProcesses, Source: SourceProcStat, OK: true,
-				}
-			}
+			cand.ticks = state.ticks - old.ticks
+		}
+		if cand.rss > 0 || cand.ticks > 0 {
+			candidates = append(candidates, cand)
 		}
 	}
 
@@ -220,21 +215,101 @@ func (s *Scanner) Sample(now time.Time, machineDeltaTicks uint64) Result {
 	res.Primed = wasPrimed
 
 	if complete && wasPrimed {
-		if cpuBest != nil && machineDeltaTicks > 0 && elapsed > 0 {
-			cpuBest.Value = units.Round(clampFloat(float64(cpuBestTicks)/float64(machineDeltaTicks)*100), 2)
-			core := units.Round(float64(cpuBestTicks)/s.clockTicks/elapsed*100, 2)
-			cpuBest.CorePercent = &core
-			res.CPU = cpuBest
+		if machineDeltaTicks > 0 && elapsed > 0 {
+			res.CPUTop = rankCPU(candidates, machineDeltaTicks, s.clockTicks, elapsed)
 		}
-		if rssBest != nil {
-			res.RSS = rssBest
-		}
+		res.RSSTop = rankRSS(candidates)
+	}
+
+	if len(res.CPUTop) > 0 {
+		res.CPU = res.CPUTop[0]
+	}
+	if len(res.RSSTop) > 0 {
+		res.RSS = res.RSSTop[0]
 	}
 
 	s.prev = next
 	s.last = now
 	s.primed = true
 	return res
+}
+
+// rankCPU returns up to maxTop CPU metrics ordered by delta ticks descending,
+// then PID ascending.  Values are computed from the machine-wide tick delta.
+func rankCPU(candidates []candidate, machineDeltaTicks uint64, clockTicks, elapsed float64) []*Metric {
+	pool := make([]candidate, 0, len(candidates))
+	for _, cand := range candidates {
+		if cand.ticks > 0 {
+			pool = append(pool, cand)
+		}
+	}
+	if len(pool) == 0 {
+		return nil
+	}
+	sort.Slice(pool, func(i, j int) bool {
+		if pool[i].ticks != pool[j].ticks {
+			return pool[i].ticks > pool[j].ticks
+		}
+		return pool[i].pid < pool[j].pid
+	})
+	if len(pool) > maxTop {
+		pool = pool[:maxTop]
+	}
+
+	windowMS := int(math.Round(elapsed * 1000))
+	out := make([]*Metric, 0, len(pool))
+	for _, cand := range pool {
+		value := units.Round(clampFloat(float64(cand.ticks)/float64(machineDeltaTicks)*100), 2)
+		core := units.Round(float64(cand.ticks)/clockTicks/elapsed*100, 2)
+		out = append(out, &Metric{
+			PID: cand.pid, Name: cand.name, Metric: MetricCPU,
+			Value:       value,
+			Unit:        UnitPercentOfMachine,
+			CorePercent: &core,
+			WindowMS:    windowMS,
+			Scope:       ScopeVisibleProcesses,
+			Source:      SourceProcStat,
+			OK:          true,
+		})
+	}
+	return out
+}
+
+// rankRSS returns up to maxTop RSS metrics ordered by bytes descending, then
+// PID ascending.
+func rankRSS(candidates []candidate) []*Metric {
+	pool := make([]candidate, 0, len(candidates))
+	for _, cand := range candidates {
+		if cand.rss > 0 {
+			pool = append(pool, cand)
+		}
+	}
+	if len(pool) == 0 {
+		return nil
+	}
+	sort.Slice(pool, func(i, j int) bool {
+		if pool[i].rss != pool[j].rss {
+			return pool[i].rss > pool[j].rss
+		}
+		return pool[i].pid < pool[j].pid
+	})
+	if len(pool) > maxTop {
+		pool = pool[:maxTop]
+	}
+
+	out := make([]*Metric, 0, len(pool))
+	for _, cand := range pool {
+		out = append(out, &Metric{
+			PID: cand.pid, Name: cand.name, Metric: MetricRSS,
+			Value:    float64(cand.rss),
+			Unit:     UnitBytes,
+			WindowMS: 0,
+			Scope:    ScopeVisibleProcesses,
+			Source:   SourceProcStat,
+			OK:       true,
+		})
+	}
+	return out
 }
 
 // parseStat parses the fields needed from one /proc/<pid>/stat file.  The comm

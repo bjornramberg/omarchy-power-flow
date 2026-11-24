@@ -241,6 +241,7 @@ func (c *Collector) SampleAt(now time.Time) report.Snapshot {
 
 	if comp := c.cpuComponent(pc.CPU, amd.CPU, cpuUtil); comp != nil {
 		comp.TopProcess = topProcess(procRes.CPU)
+		comp.TopProcesses = topProcessList(procRes.CPUTop, procRes.CPU)
 		components = append(components, *comp)
 	}
 	if comp, ok := c.gpuComponent(now); ok {
@@ -248,6 +249,7 @@ func (c *Collector) SampleAt(now time.Time) report.Snapshot {
 	}
 	if comp := c.ramComponent(pc.RAM, amd.RAM, ramInfo, cpuUtil); comp != nil {
 		comp.TopProcess = topProcess(procRes.RSS)
+		comp.TopProcesses = topProcessList(procRes.RSSTop, procRes.RSS)
 		components = append(components, *comp)
 	}
 	if disk.OK {
@@ -576,6 +578,27 @@ func topProcess(metric *procmetrics.Metric) *report.TopProcess {
 		Source:      metric.Source,
 		OK:          metric.OK,
 	}
+}
+
+// topProcessList converts a ranked metric list, falling back to the legacy
+// single metric when the list is empty.  It returns nil when neither exists, so
+// --processes off omits top_processes entirely.
+func topProcessList(metrics []*procmetrics.Metric, fallback *procmetrics.Metric) []*report.TopProcess {
+	list := make([]*report.TopProcess, 0, len(metrics))
+	for _, metric := range metrics {
+		if tp := topProcess(metric); tp != nil {
+			list = append(list, tp)
+		}
+	}
+	if len(list) == 0 {
+		if tp := topProcess(fallback); tp != nil {
+			list = append(list, tp)
+		}
+	}
+	if len(list) == 0 {
+		return nil
+	}
+	return list
 }
 
 func uncappedCount(count, capped int) int {

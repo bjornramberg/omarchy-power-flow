@@ -25,6 +25,13 @@ Item {
     property color accent: Commons.Color.accent
     property color urgent: Commons.Color.urgent
     property string fontFamily: Style.font.family
+    property string currentView: "components"
+    readonly property var processTileSpecs: [
+        { "hub": "cpu", "index": 0 },
+        { "hub": "cpu", "index": 1 },
+        { "hub": "ram", "index": 0 },
+        { "hub": "ram", "index": 1 }
+    ]
     readonly property int bodySpacing: Style.space(26)
     readonly property int nodeSpacing: Style.space(10)
     readonly property int cardPadding: Style.space(12)
@@ -97,6 +104,57 @@ Item {
 
         }
         return null;
+    }
+
+    // Last non-empty process lists per hub.  The collector omits the lists on
+    // incomplete (over-budget) scans, so tiles hold the previous sample
+    // instead of flashing "unavailable" on a gap.
+    property var cachedCpuProcs: []
+    property var cachedRamProcs: []
+    onComponentsDataChanged: root.refreshProcCache()
+    Component.onCompleted: root.refreshProcCache()
+
+    function refreshProcCache() {
+        var cpu = root.collectTopProcesses("cpu");
+        if (cpu.length > 0)
+            cachedCpuProcs = cpu;
+
+        var ram = root.collectTopProcesses("ram");
+        if (ram.length > 0)
+            cachedRamProcs = ram;
+
+    }
+
+    function topProcessesFor(id) {
+        var fresh = root.collectTopProcesses(id);
+        if (fresh.length > 0)
+            return fresh;
+
+        if (id === "cpu" && cachedCpuProcs.length > 0)
+            return cachedCpuProcs;
+
+        if (id === "ram" && cachedRamProcs.length > 0)
+            return cachedRamProcs;
+
+        return fresh;
+    }
+
+    function collectTopProcesses(id) {
+        var c = componentById(id);
+        if (!c)
+            return [];
+        var list = [];
+        if (Array.isArray(c.top_processes)) {
+            for (var i = 0; i < c.top_processes.length && list.length < 2; i++) {
+                var p = c.top_processes[i];
+                if (p && typeof p === "object")
+                    list.push(p);
+
+            }
+        }
+        if (list.length === 0 && c.top_process && typeof c.top_process === "object")
+            list.push(c.top_process);
+        return list;
     }
 
     function sourceName() {
@@ -229,16 +287,16 @@ Item {
         return root.dimmed;
     }
 
-    implicitWidth: Math.max(header.implicitWidth, body.implicitWidth)
-    implicitHeight: header.implicitHeight + root.headerBodyGap + body.implicitHeight
+    implicitWidth: Math.max(header.implicitWidth, body.implicitWidth, processesBody.implicitWidth)
+    implicitHeight: header.implicitHeight + root.headerBodyGap + Math.max(body.implicitHeight, processesBody.implicitHeight)
 
     // ---------- Header: identity, status, legend ----------
     Column {
         id: header
 
         spacing: Style.space(4)
-        anchors.left: body.left
-        width: body.width
+        anchors.left: root.currentView === "processes" ? processesBody.left : body.left
+        width: root.currentView === "processes" ? processesBody.width : body.width
 
         Row {
             spacing: Style.space(10)
@@ -282,7 +340,7 @@ Item {
                     }
 
                     Text {
-                        text: "~ estimated  ·  exact measured"
+                        text: root.currentView === "processes" ? "activity share, not watts" : "~ estimated  ·  exact measured"
                         color: root.dimmed
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.caption
@@ -290,6 +348,23 @@ Item {
 
                 }
 
+            }
+
+        }
+
+        Row {
+            spacing: Style.space(14)
+
+            ViewTab {
+                label: "COMPONENTS"
+                active: root.currentView === "components"
+                onActivated: root.currentView = "components"
+            }
+
+            ViewTab {
+                label: "PROCESSES"
+                active: root.currentView === "processes"
+                onActivated: root.currentView = "processes"
             }
 
         }
@@ -313,6 +388,7 @@ Item {
     Item {
         id: body
 
+        visible: root.currentView === "components"
         anchors.top: header.bottom
         anchors.topMargin: root.headerBodyGap
         anchors.horizontalCenter: parent.horizontalCenter
@@ -348,6 +424,70 @@ Item {
                     nodeId: modelData
                     Component.onCompleted: root.registerNode(nodeId, this)
                     Component.onDestruction: root.unregisterNode(nodeId, this)
+                }
+
+            }
+
+        }
+
+    }
+
+    // ---------- Processes body: mini hubs, cords, process tiles ----------
+    Item {
+        id: processesBody
+
+        visible: root.currentView === "processes"
+        anchors.top: header.bottom
+        anchors.topMargin: root.headerBodyGap
+        anchors.horizontalCenter: parent.horizontalCenter
+        implicitWidth: hubStack.implicitWidth + root.bodySpacing + processColumn.implicitWidth
+        implicitHeight: Math.max(hubStack.implicitHeight, processColumn.implicitHeight)
+        width: implicitWidth
+        height: implicitHeight
+
+        ProcessCordLayer {
+            anchors.fill: parent
+            z: -1
+        }
+
+        Column {
+            id: hubStack
+
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: root.nodeSpacing
+
+            MiniHub {
+                id: cpuHub
+
+                hubId: "cpu"
+            }
+
+            MiniHub {
+                id: ramHub
+
+                hubId: "ram"
+            }
+
+        }
+
+        Column {
+            id: processColumn
+
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: root.nodeSpacing
+
+            Repeater {
+                model: root.processTileSpecs
+
+                ProcessTile {
+                    required property var modelData
+                    tileId: modelData.hub + "-proc-" + modelData.index
+                    hubId: modelData.hub
+                    procIndex: modelData.index
+                    Component.onCompleted: root.registerNode(tileId, this)
+                    Component.onDestruction: root.unregisterNode(tileId, this)
                 }
 
             }
@@ -747,6 +887,407 @@ Item {
                 maxShare: cordLayerRoot.maxShare
                 isDominant: cordLayerRoot.sourceTotalW > 0 && endDrawW >= cordLayerRoot.maxComponentDrawW * 0.999
                 available: !!endData
+                dataLoaded: root.dataLoaded
+                stale: root.stale
+                reduceMotion: root.reduceMotion
+                foreground: root.foreground
+                dimmed: root.dimmed
+                accent: root.accent
+            }
+
+        }
+
+    }
+
+    component ViewTab: Item {
+        id: viewTab
+
+        property string label: ""
+        property bool active: false
+        signal activated()
+
+        width: viewTabText.implicitWidth + Style.space(14)
+        height: viewTabText.implicitHeight + Style.space(8)
+        implicitWidth: width
+        implicitHeight: height
+
+        Text {
+            id: viewTabText
+
+            anchors.centerIn: parent
+            text: viewTab.label
+            color: viewTab.active ? root.foreground : root.dimmed
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            font.letterSpacing: 1.2
+        }
+
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            width: parent.width - Style.space(8)
+            height: Math.max(1, Style.spaceReal(1.5))
+            radius: height / 2
+            color: root.accent
+            visible: viewTab.active
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: viewTab.activated()
+        }
+
+    }
+
+    component MiniHub: BorderSurface {
+        id: miniHub
+
+        property string hubId: ""
+        readonly property var c: root.componentById(hubId)
+        readonly property bool available: !!c
+        readonly property var drawW: c && c.draw_w !== undefined && c.draw_w !== null ? c.draw_w : null
+        readonly property string drawKind: c && c.draw_kind ? String(c.draw_kind) : "measured"
+        readonly property int utilizationPercent: c && typeof c.utilization_percent === "number" ? c.utilization_percent : 0
+        readonly property bool hasWatts: drawW !== null && drawW !== undefined && isFinite(Number(drawW))
+
+        function valueText() {
+            if (!root.dataLoaded)
+                return "—";
+
+            if (!miniHub.available)
+                return "unavailable";
+
+            if (drawW === null || drawW === undefined || !isFinite(Number(drawW)))
+                return "—";
+
+            var n = Number(drawW);
+            var prefix = drawKind === "modeled" ? "~" : "";
+            if (n < 10)
+                return prefix + n.toLocaleString(Qt.locale(), "f", 1) + " W";
+
+            return prefix + Math.round(n).toLocaleString(Qt.locale(), "f", 0) + " W";
+        }
+
+        function loadText() {
+            if (!root.dataLoaded)
+                return "—";
+
+            if (!miniHub.available)
+                return "unavailable";
+
+            if (hubId === "cpu")
+                return utilizationPercent + "% load";
+
+            return utilizationPercent + "% used";
+        }
+
+        // Match the components-view hub width so switching views does not
+        // shift the panel: same left edge, same cords origin geometry.
+        width: Math.max(sourceHub.width, miniHubColumn.implicitWidth + root.cardPadding * 2)
+        height: Style.space(104)
+        implicitWidth: width
+        implicitHeight: height
+        color: Util.alpha(root.accent, 0.06)
+        borderSpec: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(1)))
+        radius: Style.cornerRadius
+        padding: 0
+
+        Column {
+            id: miniHubColumn
+
+            anchors.centerIn: parent
+            spacing: Style.space(4)
+
+            Text {
+                text: root.componentGlyph(miniHub.hubId)
+                color: root.stale ? root.dimmed : root.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                horizontalAlignment: Text.AlignHCenter
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            Text {
+                text: miniHub.hubId.toUpperCase()
+                color: root.stale ? root.dimmed : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+                horizontalAlignment: Text.AlignHCenter
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            Text {
+                text: miniHub.valueText()
+                color: miniHub.available && miniHub.hasWatts && Number(miniHub.drawW) > 0 ? root.accent : (miniHub.available ? root.foreground : root.dimmed)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            Text {
+                text: miniHub.loadText()
+                color: root.dimmed
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                horizontalAlignment: Text.AlignHCenter
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            Text {
+                visible: root.stale
+                text: "STALE"
+                color: root.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+        }
+
+        // Output port where cords originate.
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            x: parent.width - width / 2
+            width: root.portSize
+            height: width
+            radius: width / 2
+            color: root.dataLoaded ? root.accent : root.foreground
+            opacity: root.dataLoaded ? 0.9 : 0.35
+            border.color: root.foreground
+            border.width: Math.max(1, Style.spaceReal(1))
+        }
+
+    }
+
+    component ProcessTile: BorderSurface {
+        id: procTile
+
+        property string tileId: ""
+        property string hubId: ""
+        property int procIndex: 0
+        readonly property bool isCpu: hubId === "cpu"
+        readonly property var procs: root.topProcessesFor(hubId)
+        readonly property var proc: procs.length > procIndex && procs[procIndex] && typeof procs[procIndex] === "object" ? procs[procIndex] : null
+        readonly property bool active: root.dataLoaded && !root.stale && proc !== null
+        readonly property real procValue: proc && proc.value !== undefined && proc.value !== null ? Number(proc.value) : NaN
+        readonly property real listMaxValue: {
+            var max = 0;
+            for (var i = 0; i < procs.length; i++) {
+                var v = procs[i] && procs[i].value !== undefined ? Number(procs[i].value) : NaN;
+                if (isFinite(v) && v > max)
+                    max = v;
+
+            }
+            return max;
+        }
+        // CPU meters scale the machine-wide percent directly; RAM meters
+        // normalize against the largest resident set in the list.
+        readonly property real displayFraction: {
+            if (!procTile.active)
+                return 0;
+
+            if (isCpu)
+                return Math.max(0, Math.min(1, procValue / 100));
+
+            return listMaxValue > 0 ? Math.max(0, Math.min(1, procValue / listMaxValue)) : 0;
+        }
+
+        function titleText() {
+            if (!procTile.active)
+                return "—";
+
+            var name = proc.name !== undefined && proc.name !== null ? String(proc.name) : "";
+            return name !== "" ? name : "unknown";
+        }
+
+        function valueText() {
+            if (!root.dataLoaded || root.stale)
+                return "—";
+
+            if (!proc)
+                return "unavailable";
+
+            if (!isFinite(procValue))
+                return "—";
+
+            if (isCpu) {
+                var text = procValue.toFixed(1) + "% of machine";
+                var core = Number(proc.core_percent);
+                if (isFinite(core))
+                    text += " (" + core.toFixed(0) + "% of one core)";
+
+                return text;
+            }
+            return root.formatBytes(procValue) + " RSS";
+        }
+
+        function pidText() {
+            if (!procTile.active)
+                return "";
+
+            var pid = Number(proc.pid);
+            return isFinite(pid) ? "PID " + Math.round(pid) : "";
+        }
+
+        width: Style.space(168)
+        height: Style.space(68)
+        implicitWidth: width
+        implicitHeight: height
+        color: Util.alpha(root.foreground, 0.04)
+        borderSpec: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(1)))
+        radius: Style.cornerRadius
+        padding: 0
+
+        Row {
+            anchors.fill: parent
+            anchors.margins: root.cardPadding
+            spacing: Style.space(10)
+
+            Text {
+                text: root.componentGlyph(procTile.hubId)
+                color: procTile.active ? root.accent : root.dimmed
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Column {
+                spacing: Style.space(1)
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - Style.space(24)
+
+                Text {
+                    width: parent.width
+                    text: procTile.titleText()
+                    color: procTile.active ? root.foreground : root.dimmed
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    width: parent.width
+                    text: procTile.valueText()
+                    color: procTile.active ? root.accent : root.dimmed
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    width: parent.width
+                    text: procTile.pidText()
+                    color: root.dimmed
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                }
+
+            }
+
+        }
+
+        // Bottom activity meter.
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: root.cardPadding
+            anchors.rightMargin: root.cardPadding
+            anchors.bottomMargin: root.cardPadding / 2
+            height: Math.max(Style.space(3), Style.spacing.xs)
+            radius: height / 2
+            color: Util.alpha(root.foreground, 0.15)
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                height: parent.height
+                radius: parent.radius
+                width: Math.max(height, parent.width * procTile.displayFraction)
+                color: procTile.displayFraction > 0 ? root.accent : Util.alpha(root.foreground, 0.35)
+
+                Behavior on width {
+                    NumberAnimation {
+                        duration: 300
+                        easing.type: Easing.OutCubic
+                    }
+
+                }
+
+            }
+
+        }
+
+        // Input port where the cord terminates.
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            x: -width / 2
+            width: root.portSize
+            height: width
+            radius: width / 2
+            color: procTile.active ? root.accent : root.dimmed
+            opacity: procTile.active ? 0.9 : 0.25
+            border.color: root.foreground
+            border.width: procTile.active ? Math.max(1, Style.spaceReal(1)) : 0
+        }
+
+    }
+
+    component ProcessCordLayer: Item {
+        id: processCordLayerRoot
+
+        Repeater {
+            model: root.processTileSpecs
+
+            AnimatedCord {
+                required property var modelData
+                readonly property string hubId: modelData.hub
+                readonly property int procIndex: modelData.index
+                readonly property string tileId: hubId + "-proc-" + procIndex
+                readonly property var endNode: root.nodeMap[tileId] || null
+                readonly property var hubNode: hubId === "cpu" ? cpuHub : ramHub
+                readonly property var procs: root.topProcessesFor(hubId)
+                readonly property var proc: procs.length > procIndex && procs[procIndex] && typeof procs[procIndex] === "object" ? procs[procIndex] : null
+                readonly property bool hasProc: proc !== null
+                readonly property real procValue: proc && proc.value !== undefined && proc.value !== null ? Number(proc.value) : NaN
+                readonly property real listMaxValue: {
+                    var max = 0;
+                    for (var i = 0; i < procs.length; i++) {
+                        var v = procs[i] && procs[i].value !== undefined ? Number(procs[i].value) : NaN;
+                        if (isFinite(v) && v > max)
+                            max = v;
+
+                    }
+                    return max;
+                }
+                readonly property int cordUtilPercent: hubId === "cpu" && isFinite(procValue) ? Math.round(Math.max(0, Math.min(100, procValue))) : 0
+                readonly property int cordActivityPercent: hubId === "cpu" ? cordUtilPercent : (isFinite(procValue) && listMaxValue > 0 ? Math.round(Math.max(0, Math.min(100, procValue / listMaxValue * 100))) : 0)
+
+                anchors.fill: parent
+                startX: hubNode ? hubStack.x + hubNode.x + hubNode.width : 0
+                startY: hubNode ? hubStack.y + hubNode.y + hubNode.height / 2 : startY
+                endX: endNode && processColumn ? processColumn.x + endNode.x : startX
+                endY: endNode && processColumn ? processColumn.y + endNode.y + endNode.height / 2 : startY
+                drawW: null
+                maxW: null
+                sourceTotalW: 0
+                maxShare: 0
+                isDominant: false
+                drawKind: "measured"
+                utilizationPercent: cordUtilPercent
+                activityPercent: cordActivityPercent
+                available: hasProc
                 dataLoaded: root.dataLoaded
                 stale: root.stale
                 reduceMotion: root.reduceMotion

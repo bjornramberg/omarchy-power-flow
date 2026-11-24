@@ -321,13 +321,13 @@ RAM top process:
 - `metric: "rss"`, `value` = resident bytes, `unit: "bytes"`, `window_ms: 0`.
 - RSS is labeled as resident memory and is not converted to power.
 
-The scan is capped at about 1200 PIDs and a 10 ms wall-clock budget. If the
+The scan is capped at about 1200 PIDs and a 25 ms wall-clock budget. If the
 scan is unprimed, incomplete, or over budget, `top_process` is omitted rather
 than reporting zero or partial coverage. Individual unreadable or churning
 `/proc` entries do not suppress the metric; they are simply outside the
 visible-process scope. `--processes off` skips the scan entirely. On the
 development host (8-core Ryzen 7 5800X, 458 PIDs), the benchmark scan took
-about **5.1 ms** per sample and stayed under the 10 ms budget.
+about **5.1 ms** per sample and stayed well under budget.
 
 ## Disk estimate (`model:disk-busy/1`)
 

@@ -117,17 +117,18 @@ type TopProcess struct {
 // activity_percent is the legacy design field (0..100); utilization_percent is
 // the measured load/utilization when one is available.
 type Component struct {
-	ID                 string      `json:"id"`
-	Label              string      `json:"label"`
-	DrawW              *float64    `json:"draw_w"`
-	MaxW               *float64    `json:"max_w"`
-	ActivityPercent    int         `json:"activity_percent"`
-	DrawKind           string      `json:"draw_kind"`
-	DrawSource         string      `json:"draw_source"`
-	UtilizationPercent *int        `json:"utilization_percent,omitempty"`
-	UncertaintyPercent *int        `json:"uncertainty_percent,omitempty"`
-	Model              *Model      `json:"model,omitempty"`
-	TopProcess         *TopProcess `json:"top_process,omitempty"`
+	ID                 string        `json:"id"`
+	Label              string        `json:"label"`
+	DrawW              *float64      `json:"draw_w"`
+	MaxW               *float64      `json:"max_w"`
+	ActivityPercent    int           `json:"activity_percent"`
+	DrawKind           string        `json:"draw_kind"`
+	DrawSource         string        `json:"draw_source"`
+	UtilizationPercent *int          `json:"utilization_percent,omitempty"`
+	UncertaintyPercent *int          `json:"uncertainty_percent,omitempty"`
+	Model              *Model        `json:"model,omitempty"`
+	TopProcess         *TopProcess   `json:"top_process,omitempty"`
+	TopProcesses       []*TopProcess `json:"top_processes,omitempty"`
 }
 
 // Snapshot is the complete line-oriented contract.
@@ -202,6 +203,9 @@ func normalize(s *Snapshot) {
 		comp.UncertaintyPercent = sanitizePercentPtr(comp.UncertaintyPercent)
 		sanitizeModel(comp.Model)
 		sanitizeTopProcess(comp.TopProcess)
+		for _, tp := range comp.TopProcesses {
+			sanitizeTopProcess(tp)
+		}
 	}
 }
 

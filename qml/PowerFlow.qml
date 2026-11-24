@@ -314,6 +314,18 @@ Panel {
             if (c.top_process && typeof c.top_process === "object")
                 norm.top_process = c.top_process;
 
+            if (Array.isArray(c.top_processes)) {
+                var topProcs = [];
+                for (var j = 0; j < c.top_processes.length && topProcs.length < 5; j++) {
+                    var tp = c.top_processes[j];
+                    if (tp && typeof tp === "object" && !Array.isArray(tp))
+                        topProcs.push(tp);
+
+                }
+                if (topProcs.length > 0)
+                    norm.top_processes = topProcs;
+            }
+
             out.push(norm);
         }
         return out;
@@ -377,6 +389,8 @@ Panel {
         if (opened) {
             resetFailureBudget();
             stale = false;
+            if (dashboard)
+                dashboard.currentView = "components";
             if (collector.running && expectedStop)
                 restartPending = true;
             else if (!collector.running)
@@ -386,6 +400,8 @@ Panel {
             stale = false;
             retrying = false;
             restartPending = false;
+            if (dashboard)
+                dashboard.currentView = "components";
         }
     }
     Component.onCompleted: {

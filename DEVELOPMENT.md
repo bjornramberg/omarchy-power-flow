@@ -152,8 +152,9 @@ per-process DRAM or GPU watts, and process I/O permissions are incomplete, so
 the plugin intentionally does not make disk/GPU process-power claims.
 
 The collector performs one bounded `/proc/<pid>/stat` scan per second, capped at
-about 1200 PIDs and a 10 ms wall-clock budget. It measures about 5 ms per scan
-on a roughly 460-process host. Disable it with:
+about 1200 PIDs and a 25 ms wall-clock budget. Mean scans measure about 7 ms
+on a roughly 470-process host, so the budget keeps incomplete-scan gaps rare.
+Disable it with:
 
 ```sh
 ./bin/omarchy-power-flow --processes off

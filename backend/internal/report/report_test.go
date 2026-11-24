@@ -106,6 +106,70 @@ func TestTopProcessJSON(t *testing.T) {
 	}
 }
 
+func TestTopProcessesJSONAndSanitize(t *testing.T) {
+	snap := Snapshot{
+		Source: Source{
+			Name: "Battery", BatteryPercentage: 42,
+			TotalDrawKind: TotalKindMixed, PowerMode: PowerModeBattery,
+		},
+		Components: []Component{{
+			ID: IDCPU, Label: "CPU",
+			DrawW: Float64Ptr(12), MaxW: Float64Ptr(142),
+			ActivityPercent: 20, DrawKind: DrawKindMeasured,
+			DrawSource: "powercap:rapl",
+			TopProcess: &TopProcess{
+				PID: 4242, Name: "firefox", Metric: TopMetricCPU,
+				Value: 12.5, Unit: "percent_of_machine",
+				CorePercent: Float64Ptr(50), WindowMS: 1000,
+				Scope: "visible_processes", Source: "proc:stat", OK: true,
+			},
+			TopProcesses: []*TopProcess{
+				{
+					PID: 4242, Name: "firefox", Metric: TopMetricCPU,
+					Value: 12.5, Unit: "percent_of_machine",
+					CorePercent: Float64Ptr(50), WindowMS: 1000,
+					Scope: "visible_processes", Source: "proc:stat", OK: true,
+				},
+				{
+					PID: 7, Name: "bad", Metric: TopMetricCPU,
+					Value: 500, Unit: "percent_of_machine",
+					CorePercent: Float64Ptr(math.NaN()), WindowMS: -1,
+					Scope: "visible_processes", Source: "proc:stat", OK: true,
+				},
+			},
+		}},
+	}
+
+	got, err := MarshalLine(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(got)
+	if !strings.Contains(out, `"top_processes":[`) {
+		t.Fatalf("top_processes missing: %s", out)
+	}
+	// The top-1 field keeps its exact shape for backward compatibility.
+	if !strings.Contains(out, `"top_process":{"pid":4242`) {
+		t.Errorf("top_process shape changed: %s", out)
+	}
+	if !json.Valid(got) || strings.Count(out, "\n") != 1 {
+		t.Fatalf("invalid line: %q", out)
+	}
+
+	normalize(&snap)
+	second := snap.Components[0].TopProcesses[1]
+	if second.Value != 100 || second.CorePercent != nil || second.WindowMS != 0 {
+		t.Errorf("top_processes sanitize failed: %+v", second)
+	}
+	first := snap.Components[0].TopProcesses[0]
+	if first.Value != 12.5 || first.CorePercent == nil || *first.CorePercent != 50 {
+		t.Errorf("top_processes clamped valid entry: %+v", first)
+	}
+	if strings.Contains(out, `"top_processes":null`) {
+		t.Errorf("top_processes must be omitted when empty, got null")
+	}
+}
+
 func TestUtilizationOnlyNulls(t *testing.T) {
 	got, err := MarshalLine(Snapshot{
 		Source: Source{

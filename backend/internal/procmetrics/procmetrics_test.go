@@ -52,6 +52,91 @@ func testScanner(root string, opts Options) *Scanner {
 	return New(fsx.New(root), opts)
 }
 
+func TestTopTwoCPUAndRSSRanking(t *testing.T) {
+	root := t.TempDir()
+	putProc(t, root, 70, statLine(70, "heavy-rss", "S", 0, 0, 0, 100, 30))
+	putProc(t, root, 71, statLine(71, "cpu-hog", "S", 0, 0, 0, 100, 10))
+	putProc(t, root, 72, statLine(72, "mid", "S", 0, 0, 0, 100, 20))
+	putProc(t, root, 73, statLine(73, "mid-tie", "S", 0, 0, 0, 100, 20))
+
+	s := testScanner(root, Options{})
+	t0 := time.Unix(1000, 0)
+	first := s.Sample(t0, 1000)
+	if first.CPUTop != nil || first.RSSTop != nil {
+		t.Fatalf("unprimed scan reported lists: %+v", first)
+	}
+
+	putProc(t, root, 70, statLine(70, "heavy-rss", "S", 0, 10, 0, 100, 30))
+	putProc(t, root, 71, statLine(71, "cpu-hog", "S", 0, 30, 0, 100, 10))
+	putProc(t, root, 72, statLine(72, "mid", "S", 0, 20, 0, 100, 20))
+	putProc(t, root, 73, statLine(73, "mid-tie", "S", 0, 20, 0, 100, 20))
+	res := s.Sample(t0.Add(time.Second), 1000)
+	if !res.Complete || !res.Primed {
+		t.Fatalf("scan state = %+v, want complete and primed", res)
+	}
+
+	if len(res.CPUTop) != 2 {
+		t.Fatalf("CPUTop = %+v, want 2 entries", res.CPUTop)
+	}
+	// 30 ticks then 20 ticks; PID 72 wins the 20-tick tie against PID 73.
+	if res.CPUTop[0].PID != 71 || res.CPUTop[1].PID != 72 {
+		t.Fatalf("CPUTop order = %d,%d, want 71,72", res.CPUTop[0].PID, res.CPUTop[1].PID)
+	}
+	if res.CPUTop[0].Value != 3 || res.CPUTop[1].Value != 2 {
+		t.Errorf("CPU shares = %v,%v, want 3,2", res.CPUTop[0].Value, res.CPUTop[1].Value)
+	}
+	if res.CPUTop[0].CorePercent == nil || *res.CPUTop[0].CorePercent != 30 {
+		t.Errorf("top core percent = %v, want 30", res.CPUTop[0].CorePercent)
+	}
+	if res.CPUTop[1].CorePercent == nil || *res.CPUTop[1].CorePercent != 20 {
+		t.Errorf("second core percent = %v, want 20", res.CPUTop[1].CorePercent)
+	}
+	for _, m := range res.CPUTop {
+		if m.Unit != UnitPercentOfMachine || m.WindowMS != 1000 ||
+			m.Scope != ScopeVisibleProcesses || m.Source != SourceProcStat || !m.OK {
+			t.Errorf("CPU metadata = %+v", m)
+		}
+	}
+	if res.CPU != res.CPUTop[0] {
+		t.Errorf("CPU = %+v, want first CPUTop entry", res.CPU)
+	}
+
+	if len(res.RSSTop) != 2 {
+		t.Fatalf("RSSTop = %+v, want 2 entries", res.RSSTop)
+	}
+	// 30 pages then the 20-page PID tie broken by PID ascending.
+	if res.RSSTop[0].PID != 70 || res.RSSTop[1].PID != 72 {
+		t.Fatalf("RSSTop order = %d,%d, want 70,72", res.RSSTop[0].PID, res.RSSTop[1].PID)
+	}
+	if res.RSSTop[0].Value != 30*4096 || res.RSSTop[1].Value != 20*4096 {
+		t.Errorf("RSS bytes = %v,%v", res.RSSTop[0].Value, res.RSSTop[1].Value)
+	}
+	for _, m := range res.RSSTop {
+		if m.Unit != UnitBytes || m.WindowMS != 0 || m.CorePercent != nil {
+			t.Errorf("RSS metadata = %+v", m)
+		}
+	}
+	if res.RSS != res.RSSTop[0] {
+		t.Errorf("RSS = %+v, want first RSSTop entry", res.RSS)
+	}
+}
+
+func TestTopListsSingleCandidate(t *testing.T) {
+	root := t.TempDir()
+	putProc(t, root, 80, statLine(80, "only", "S", 0, 0, 0, 100, 5))
+	s := testScanner(root, Options{})
+	t0 := time.Unix(1000, 0)
+	s.Sample(t0, 1000)
+	putProc(t, root, 80, statLine(80, "only", "S", 0, 10, 0, 100, 5))
+	res := s.Sample(t0.Add(time.Second), 1000)
+	if len(res.CPUTop) != 1 || len(res.RSSTop) != 1 {
+		t.Fatalf("lists = %d/%d, want 1/1", len(res.CPUTop), len(res.RSSTop))
+	}
+	if res.CPUTop[0].PID != 80 || res.RSSTop[0].PID != 80 {
+		t.Fatalf("list entries = %+v / %+v", res.CPUTop[0], res.RSSTop[0])
+	}
+}
+
 func TestParseStatCommAndFields(t *testing.T) {
 	comm := "na)me with space\nand newline"
 	line := statLine(123, comm, "S", 0, 11, 7, 900, 12)
@@ -80,6 +165,9 @@ func TestScanCPUAndRSSInOnePass(t *testing.T) {
 	first := s.Sample(t0, 1000)
 	if first.CPU != nil || first.RSS != nil {
 		t.Fatalf("unprimed scan reported metrics: %+v", first)
+	}
+	if first.CPUTop != nil || first.RSSTop != nil {
+		t.Fatalf("unprimed scan reported lists: %+v", first)
 	}
 	if first.Primed {
 		t.Fatal("first scan reported Primed")
@@ -218,6 +306,9 @@ func TestMissingProcRoot(t *testing.T) {
 	if res.Complete || res.CPU != nil || res.RSS != nil {
 		t.Fatalf("missing /proc produced data: %+v", res)
 	}
+	if res.CPUTop != nil || res.RSSTop != nil {
+		t.Fatalf("missing /proc produced lists: %+v", res)
+	}
 }
 
 func TestBudgetAndPIDCapOmitMetrics(t *testing.T) {
@@ -232,12 +323,18 @@ func TestBudgetAndPIDCapOmitMetrics(t *testing.T) {
 	if res.Complete || res.CPU != nil || res.RSS != nil {
 		t.Fatalf("budget-exceeded scan produced data: %+v", res)
 	}
+	if res.CPUTop != nil || res.RSSTop != nil {
+		t.Fatalf("budget-exceeded scan produced lists: %+v", res)
+	}
 
 	capped := testScanner(root, Options{MaxPIDs: 1})
 	capped.Sample(t0, 1000)
 	res = capped.Sample(t0.Add(time.Second), 1000)
 	if res.Complete || res.CPU != nil || res.RSS != nil {
 		t.Fatalf("PID-capped scan produced data: %+v", res)
+	}
+	if res.CPUTop != nil || res.RSSTop != nil {
+		t.Fatalf("PID-capped scan produced lists: %+v", res)
 	}
 }
 
